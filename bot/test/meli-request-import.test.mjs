@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { parseMeliRequest } from "../meli-request-import.mjs";
 
 const fixture = `$session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+$session.UserAgent = "Mozilla/5.0 TestBrowser/1.0"
 $session.Cookies.Add((New-Object System.Net.Cookie("ssid", "session-value", "/", ".mercadolivre.com.br")))
 $session.Cookies.Add((New-Object System.Net.Cookie("_csrf", "cookie-csrf", "/", ".mercadolivre.com.br")))
 Invoke-WebRequest -UseBasicParsing -Uri "https://www.mercadolivre.com.br/affiliate-program/api/v2/affiliates/createLink" -Method "POST" -WebSession $session -Headers @{"x-csrf-token"="header-csrf"; "Origin"="https://www.mercadolivre.com.br"; "Referer"="https://www.mercadolivre.com.br/afiliados/linkbuilder"; "sec-ch-ua"="\`"Chromium\`";v=\`"140\`""} -ContentType "application/json" -Body "{\`"urls\`":[\`"https://www.mercadolivre.com.br/p/MLB123\`"],\`"tag\`":\`"vijo3432338\`"}"`;
@@ -14,7 +15,7 @@ test("parses one exact createLink PowerShell request without executing it", () =
     csrfToken: "header-csrf",
     origin: "https://www.mercadolivre.com.br",
     referer: "https://www.mercadolivre.com.br/afiliados/linkbuilder",
-    browserHeaders: { "sec-ch-ua": '"Chromium";v="140"' },
+    browserHeaders: { "sec-ch-ua": '"Chromium";v="140"', "user-agent": "Mozilla/5.0 TestBrowser/1.0" },
     importedAt: "2026-09-06T12:00:00.000Z",
   });
 });

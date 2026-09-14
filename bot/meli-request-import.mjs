@@ -35,6 +35,9 @@ export function parseMeliRequest(text, { now = () => new Date() } = {}) {
     const value = header(text, name);
     if (value) browserHeaders[name] = value;
   }
+  const sessionUserAgent = text.match(/\$session\.UserAgent\s*=\s*"((?:\u0060.|[^"\u0060])*)"/i)?.[1]
+    ?.replace(/\u0060"/g, '"').replace(/\u0060\u0060/g, "\u0060");
+  if (sessionUserAgent) browserHeaders["user-agent"] = sessionUserAgent;
   const bodyStart = text.search(/-Body\s+"/i);
   if (bodyStart < 0) invalid();
   const bodyPrefix = text.slice(bodyStart).match(/^-Body\s+"/i)?.[0];
