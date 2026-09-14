@@ -1,11 +1,3 @@
-:80 {
-	import promomega_app
-}
-
-promomega.com.br, www.promomega.com.br {
-	import promomega_app
-}
-
 (promomega_app) {
 	encode zstd gzip
 	reverse_proxy bot:3000
@@ -15,4 +7,12 @@ promomega.com.br, www.promomega.com.br {
 		Referrer-Policy strict-origin-when-cross-origin
 		-Server
 	}
+}
+
+:80 {
+	import promomega_app
+}
+
+promomega.com.br, www.promomega.com.br {
+	import promomega_app
 }
