@@ -20,18 +20,19 @@ test("initializes anonymous click storage without personal identifiers", async (
   assert.doesNotMatch(db.calls[0].text, /ip_address|user_agent|fingerprint/i);
 });
 
-test("lists only published offers using bounded parameterized filters", async () => {
+test("lists only recent published offers using bounded parameterized filters", async () => {
   const db = database([[{
     niche_id: "games", item_id: "MLB1", title: "Controle", price: "379.90",
     original_price: "499.90", image_url: "https://http2.mlstatic.com/a.jpg",
     published_at: "2026-09-12T12:00:00Z", total_count: "1",
   }]]);
-  const result = await new PublicOffersStore(db).list({ query: "controle", category: "games", sort: "discount", page: 2, limit: 500 });
+  const result = await new PublicOffersStore(db, { now: () => new Date("2026-09-14T12:00:00Z") }).list({ query: "controle", category: "games", sort: "discount", page: 2, limit: 500 });
   assert.equal(result.total, 1);
   assert.equal(result.items[0].redirectUrl, "/oferta/games/MLB1");
   assert.match(db.calls[0].text, /offer_publications/);
   assert.match(db.calls[0].text, /state\s*=\s*'published'/);
-  assert.deepEqual(db.calls[0].values, ["%controle%", "games", 48, 48]);
+  assert.deepEqual(db.calls[0].values, ["%controle%", "games", new Date("2026-09-07T12:00:00Z"), 48, 48]);
+  assert.match(db.calls[0].text, /published_at\s*>=\s*\$3/);
   assert.ok(!db.calls[0].text.includes("controle"));
 });
 
@@ -47,4 +48,37 @@ test("returns populated categories, destination, and records an anonymous click"
   await store.recordClick("games", "MLB1", "request-id", "google.com");
   assert.match(db.calls[2].text, /INSERT INTO promonet\.offer_clicks/);
   assert.deepEqual(db.calls[2].values, ["games", "MLB1", "request-id", "google.com"]);
+});
+
+test("reads indexable category and offer views with a seven day lifecycle", async () => {
+  const db = database([
+    [{ niche_id: "games", item_id: "MLB1", title: "Controle", price: "379.90", original_price: "499.90", image_url: "https://http2.mlstatic.com/a.jpg", published_at: "2026-09-12T12:00:00Z", total_count: "1" }],
+    [{ niche_id: "games", item_id: "MLB1", title: "Controle", price: "379.90", original_price: "499.90", image_url: "https://http2.mlstatic.com/a.jpg", published_at: "2026-09-12T12:00:00Z", affiliate_url: "https://meli.la/abc" }],
+    [{ niche_id: "games", item_id: "MLB2", title: "Console", price: "3000", original_price: null, image_url: null, published_at: "2026-09-13T12:00:00Z" }],
+  ]);
+  const store = new PublicOffersStore(db, { now: () => new Date("2026-09-14T12:00:00Z") });
+  assert.equal((await store.listCategory("games", { limit: 24 })).items[0].itemId, "MLB1");
+  assert.equal((await store.findOfferPage("games", "MLB1")).status, "active");
+  assert.equal((await store.listRelated("games", "MLB1", 4))[0].itemId, "MLB2");
+  assert.match(db.calls[0].text, /published_at\s*>=\s*\$\d/);
+});
+
+test("distinguishes expired, unavailable, and unknown offers", async () => {
+  const db = database([
+    [{ niche_id: "games", item_id: "OLD", title: "Antigo", price: "99", original_price: null, image_url: null, published_at: "2026-09-01T12:00:00Z", affiliate_url: "https://meli.la/old" }],
+    [{ niche_id: "games", item_id: "BAD", title: "Sem destino", price: "99", original_price: null, image_url: null, published_at: "2026-09-13T12:00:00Z", affiliate_url: null }],
+    [],
+  ]);
+  const store = new PublicOffersStore(db, { now: () => new Date("2026-09-14T12:00:00Z") });
+  assert.equal((await store.findOfferPage("games", "OLD")).status, "expired");
+  assert.equal((await store.findOfferPage("games", "BAD")).status, "unavailable");
+  assert.equal(await store.findOfferPage("games", "UNKNOWN"), null);
+});
+
+test("lists only active category and offer URLs for the sitemap", async () => {
+  const db = database([[{ niche_id: "games", latest_at: "2026-09-13T12:00:00Z" }], [{ niche_id: "games", item_id: "MLB1", published_at: "2026-09-13T12:00:00Z" }]]);
+  const store = new PublicOffersStore(db, { now: () => new Date("2026-09-14T12:00:00Z") });
+  assert.deepEqual(await store.listSitemapCategories(), [{ slug: "games", lastModified: "2026-09-13T12:00:00.000Z" }]);
+  assert.deepEqual(await store.listSitemapOffers(), [{ category: "games", itemId: "MLB1", lastModified: "2026-09-13T12:00:00.000Z" }]);
+  assert.match(db.calls[1].text, /published_at\s*>=\s*\$1/);
 });
