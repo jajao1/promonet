@@ -16,3 +16,14 @@
 promomega.com.br, www.promomega.com.br {
 	import promomega_app
 }
+
+evolution.promomega.com.br {
+	encode zstd gzip
+	reverse_proxy evolution:8080
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+}
