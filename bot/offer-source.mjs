@@ -1,8 +1,9 @@
-async function getJson(fetch,url,token){
+async function getJson(fetch,url,token,{unsupported404=false}={}){
   let response;
   try{response=await fetch(url,{method:"GET",redirect:"manual",signal:AbortSignal.timeout(15000),headers:{authorization:`Bearer ${token}`,accept:"application/json"}});}catch{throw Error("source_unavailable");}
   if([401,403].includes(response.status))throw Error("source_auth_failed");
   if(response.status===429)throw Error("source_rate_limited");
+  if(response.status===404&&unsupported404)throw Error("source_unsupported_category");
   if(!response.ok)throw Error("source_unavailable");
   const length=Number(response.headers.get("content-length")??0);if(length>1024*1024)throw Error("source_response_invalid");
   const bytes=Buffer.from(await response.arrayBuffer());if(bytes.length>1024*1024)throw Error("source_response_invalid");
@@ -12,7 +13,7 @@ export class OfficialOfferSource{
   constructor({fetch=globalThis.fetch}={}){this.fetch=fetch;}
   async list(categoryId,token){
     if(!/^MLB\d+$/.test(categoryId)||!token)throw Error("source_configuration_invalid");
-    const highlights=await getJson(this.fetch,`https://api.mercadolibre.com/highlights/MLB/category/${categoryId}`,token);
+    const highlights=await getJson(this.fetch,`https://api.mercadolibre.com/highlights/MLB/category/${categoryId}`,token,{unsupported404:true});
     if(!Array.isArray(highlights?.content))throw Error("source_response_invalid");
     const refs=highlights.content.map((x,rank)=>({sourceType:x.type,sourceId:String(x.id),rank:x.position??rank})).filter(x=>["ITEM","PRODUCT","USER_PRODUCT"].includes(x.sourceType));
     if(!refs.length)return [];
