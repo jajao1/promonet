@@ -58,10 +58,12 @@ services:
       DATABASE_SAVE_DATA_HISTORIC: 'false'
       DATABASE_SAVE_DATA_LABELS: 'false'
       DATABASE_SAVE_IS_ON_WHATSAPP: 'false'
-      CACHE_REDIS_ENABLED: 'true'
+      CACHE_REDIS_ENABLED: 'false'
       CACHE_REDIS_URI: redis://redis:6379/0
       CACHE_REDIS_PREFIX_KEY: promonet_evolution
       CACHE_REDIS_SAVE_INSTANCES: 'true'
+      CACHE_LOCAL_ENABLED: 'true'
+      CONFIG_SESSION_PHONE_VERSION: '2.3000.1033773198'
       TELEMETRY_ENABLED: 'false'
       LOG_LEVEL: ERROR,WARN
       LOG_BAILEYS: error
