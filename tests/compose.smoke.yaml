@@ -1,0 +1,7 @@
+# Somente teste: grupos ficticios, sem conta pareada, sem chamadas externas do bot.
+services:
+  bot:
+    environment:
+      DRY_RUN: 'true'
+    volumes:
+      - ./tests/config:/app/config:ro

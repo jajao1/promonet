@@ -1,0 +1,138 @@
+name: promonet
+
+services:
+  postgres:
+    image: postgres:16.13-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: promonet
+      POSTGRES_USER: promonet
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no .env}
+    volumes:
+      - postgres_v232_data:/var/lib/postgresql/data
+    ports:
+      - '127.0.0.1:${POSTGRES_PORT:-5433}:5432'
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U promonet -d promonet"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    logging: &logs
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+
+  redis:
+    image: redis:7.4.8-alpine
+    restart: unless-stopped
+    command: [redis-server, --appendonly, 'yes']
+    volumes:
+      - redis_v232_data:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging: *logs
+
+  evolution:
+    image: evoapicloud/evolution-api:v2.3.2
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:${EVOLUTION_PORT:-8080}:8080'
+    environment:
+      SERVER_TYPE: http
+      SERVER_PORT: '8080'
+      SERVER_URL: ${EVOLUTION_PUBLIC_URL:-http://localhost:8080}
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:?Defina EVOLUTION_API_KEY no .env}
+      AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES: 'false'
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://promonet:${POSTGRES_PASSWORD}@postgres:5432/promonet?schema=evolution_api
+      DATABASE_CONNECTION_CLIENT_NAME: promonet_evolution
+      DATABASE_SAVE_DATA_INSTANCE: 'true'
+      DATABASE_SAVE_DATA_NEW_MESSAGE: 'false'
+      DATABASE_SAVE_MESSAGE_UPDATE: 'false'
+      DATABASE_SAVE_DATA_CONTACTS: 'false'
+      DATABASE_SAVE_DATA_CHATS: 'false'
+      DATABASE_SAVE_DATA_HISTORIC: 'false'
+      DATABASE_SAVE_DATA_LABELS: 'false'
+      DATABASE_SAVE_IS_ON_WHATSAPP: 'false'
+      CACHE_REDIS_ENABLED: 'true'
+      CACHE_REDIS_URI: redis://redis:6379/0
+      CACHE_REDIS_PREFIX_KEY: promonet_evolution
+      CACHE_REDIS_SAVE_INSTANCES: 'true'
+      TELEMETRY_ENABLED: 'false'
+      LOG_LEVEL: ERROR,WARN
+      LOG_BAILEYS: error
+      DEL_INSTANCE: 'false'
+      WEBHOOK_GLOBAL_ENABLED: 'false'
+    volumes:
+      - evolution_v232_instances:/evolution/instances
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8080/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      start_period: 120s
+      retries: 10
+    logging: *logs
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
+    ports:
+      - '127.0.0.1:${BOT_PORT:-3000}:3000'
+    environment:
+      NODE_ENV: production
+      PORT: '3000'
+      DATABASE_URL: postgresql://promonet:${POSTGRES_PASSWORD}@postgres:5432/promonet
+      EVOLUTION_URL: http://evolution:8080
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:?Defina EVOLUTION_API_KEY no .env}
+      EVOLUTION_INSTANCE: ${EVOLUTION_INSTANCE:-promonet}
+      WHATSAPP_GROUP_URL: ${WHATSAPP_GROUP_URL:-}
+      ADMIN_WHATSAPP: ${ADMIN_WHATSAPP:-}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:?Defina WEBHOOK_SECRET no .env}
+      DRY_RUN: ${DRY_RUN:-true}
+      CONFIG_PATH: /app/config/routes.json
+      COLLECTOR_ENABLED: ${COLLECTOR_ENABLED:-false}
+      NICHES_CONFIG_PATH: /app/config/niches.json
+      MELI_SESSION_PATH: /run/secrets/meli-session.json
+      MELI_OAUTH_ENABLED: ${MELI_OAUTH_ENABLED:-false}
+      MELI_CLIENT_ID: ${MELI_CLIENT_ID:-}
+      MELI_CLIENT_SECRET: ${MELI_CLIENT_SECRET:-}
+      MELI_REDIRECT_URI: ${MELI_REDIRECT_URI:-}
+      MELI_OAUTH_TOKEN_PATH: /run/secrets-write/meli-oauth.json
+      MELI_BRIDGE_URL: ${MELI_BRIDGE_URL:-http://host.docker.internal:3210}
+      MELI_BRIDGE_KEY_PATH: /run/secrets/meli-bridge-key.txt
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    volumes:
+      - ./config:/app/config:ro
+      - ./secrets:/run/secrets:ro
+      - ./secrets:/run/secrets-write
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging: *logs
+
+volumes:
+  postgres_v232_data:
+  redis_v232_data:
+  evolution_v232_instances:

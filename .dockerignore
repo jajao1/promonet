@@ -1,0 +1,11 @@
+**
+!package.json
+!package-lock.json
+!bot/
+!bot/**
+!scripts/
+!scripts/**
+!site/
+!site/**
+bot/test/
+bot/**/*.log

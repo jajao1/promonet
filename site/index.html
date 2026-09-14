@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#ffffff">
+  <meta name="description" content="Promoções recentes com acesso direto à loja."><title>PromoNet — Ofertas recentes</title>
+  <link rel="icon" type="image/jpeg" href="/logo.jpg"><link rel="stylesheet" href="/styles.css"><script src="/app.js" type="module"></script>
+</head>
+<body>
+  <a class="skip-link" href="#ofertas">Ir para as ofertas</a>
+  <header class="topbar"><div class="header-inner">
+    <div class="header-row">
+      <a class="brand" href="/" aria-label="PromoNet, página inicial"><img class="brand-logo" src="/logo.jpg" alt="PromoNet" width="48" height="48"><strong>Promo<span>Net</span></strong></a>
+      <form class="header-search" role="search" id="search-form"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m21 21-4.4-4.4m2.4-5.1a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z"/></svg><label class="sr-only" for="offer-search">Buscar ofertas</label><input id="offer-search" name="q" type="search" maxlength="100" autocomplete="off" placeholder="Busque produtos ou promoções..."><button type="submit">Buscar</button></form>
+      <a class="whatsapp-link header-community" href="https://chat.whatsapp.com/H2mx04zJYff3fTVJMqp8Uu" target="_blank" rel="noopener noreferrer">Entrar no WhatsApp <small>VIP</small></a>
+    </div>
+    <nav class="main-nav" aria-label="Categorias de ofertas"><div id="category-list" class="category-list"><button class="category-chip active" type="button" data-category="" aria-pressed="true"><i></i>Em alta</button></div></nav>
+  </div></header>
+  <main><div class="page-shell">
+    <section class="hero-card"><div class="hero-copy"><p class="live-label"><i></i><span id="hero-total">Ofertas atualizadas automaticamente</span></p><h1>As melhores promoções da internet <span>em um só lugar.</span></h1><p>Ofertas recentes organizadas para você comparar o preço e acessar diretamente a loja.</p></div><div class="hero-action"><a class="whatsapp-link" href="https://chat.whatsapp.com/H2mx04zJYff3fTVJMqp8Uu" target="_blank" rel="noopener noreferrer">Entrar no grupo do WhatsApp <small>GRÁTIS</small></a><p>Receba os novos achados no WhatsApp</p></div></section>
+    <section class="offers-section" id="ofertas" aria-labelledby="offers-title">
+      <div class="section-heading"><div class="heading-mark">%</div><div><h2 id="offers-title">Ofertas em destaque</h2><p>Promoções publicadas recentemente</p></div></div>
+      <div class="offers-toolbar"><p id="results-summary" class="results-summary" aria-live="polite">Carregando ofertas…</p><label class="sort-control">Ordenar <select id="offer-sort"><option value="recent">Mais recentes</option><option value="discount">Maior desconto</option></select></label></div>
+      <div id="status" class="status" role="status" aria-live="polite"></div><div id="offer-grid" class="offer-grid" aria-busy="true"></div><div class="load-more-wrap"><button id="load-more" class="secondary-button" type="button" hidden>Carregar mais ofertas</button></div>
+      <div id="empty-state" class="message-card" hidden><h3>Nenhuma oferta encontrada</h3><p>Tente outra busca ou categoria.</p><button type="button" id="clear-filters">Limpar filtros</button></div>
+      <div id="error-state" class="message-card" hidden><h3>Não foi possível carregar as ofertas</h3><p>Tente novamente em instantes.</p><button type="button" id="retry-load">Tentar novamente</button></div>
+    </section>
+    <section class="community-banner" aria-labelledby="community-title"><div><p>COMUNIDADE PROMONET</p><h2 id="community-title">Receba promoções pelo WhatsApp</h2><span>Entre gratuitamente e acompanhe os próximos achados.</span></div><a class="whatsapp-link" href="https://chat.whatsapp.com/H2mx04zJYff3fTVJMqp8Uu" target="_blank" rel="noopener noreferrer">Participar do grupo</a></section>
+    <p class="affiliate-disclosure"><strong>Publicidade:</strong> podemos receber uma comissão pelas compras realizadas, sem custo adicional para você. Preços e disponibilidade podem mudar na loja.</p>
+  </div></main>
+  <a class="floating-community whatsapp-link" href="https://chat.whatsapp.com/H2mx04zJYff3fTVJMqp8Uu" target="_blank" rel="noopener noreferrer"><small>COMUNIDADE</small><strong>Receber ofertas</strong></a>
+  <footer class="site-footer"><div class="footer-grid"><div class="footer-about"><div class="footer-brand"><img class="brand-logo" src="/logo.jpg" alt="PromoNet" width="54" height="54"><strong>Promo<span>Net</span></strong></div><p>Ofertas encontradas e publicadas automaticamente.</p></div><div><h2>Ofertas</h2><a href="#ofertas">Mais recentes</a><a href="#ofertas">Maiores descontos</a></div><div><h2>Comunidade</h2><a class="whatsapp-link" href="https://chat.whatsapp.com/H2mx04zJYff3fTVJMqp8Uu" target="_blank" rel="noopener noreferrer">Grupo oficial do WhatsApp</a></div></div><div class="footer-bottom"><p>© <span id="current-year"></span> PromoNet</p><p>Transparência em links de afiliados</p></div></footer>
+  <template id="offer-template"><article class="offer-card"><div class="offer-top"><span class="discount-badge" hidden></span><span class="recent-badge">Recente</span></div><div class="image-wrap"><img class="product-image" src="/product-placeholder.svg" alt="" loading="lazy" referrerpolicy="no-referrer"></div><div class="offer-content"><p class="marketplace">Mercado Livre</p><h3 class="offer-title"></h3><div class="price-block"><del class="original-price" hidden></del><strong class="current-price"></strong></div><p class="updated-at"></p><a class="offer-link" rel="sponsored nofollow noopener">Pegar promoção <span aria-hidden="true">↗</span></a></div></article></template>
+</body></html>

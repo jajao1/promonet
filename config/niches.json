@@ -1,0 +1,8 @@
+{
+  "niches": [
+    { "id": "technology", "categoryId": "MLB1000", "destinationGroup": "technology-pending@g.us", "tag": "vijo3432338", "intervalMinutes": 120, "limit": 1, "enabled": false },
+    { "id": "home", "categoryId": "MLB1574", "destinationGroup": "home-pending@g.us", "tag": "vijo3432338", "intervalMinutes": 120, "limit": 1, "enabled": false },
+    { "id": "fashion", "categoryId": "MLB1430", "destinationGroup": "fashion-pending@g.us", "tag": "vijo3432338", "intervalMinutes": 120, "limit": 1, "enabled": false },
+    { "id": "games", "categoryId": "MLB1144", "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 120, "limit": 1, "enabled": true }
+  ]
+}
