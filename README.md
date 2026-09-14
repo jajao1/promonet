@@ -257,9 +257,25 @@ A ponte escuta somente em `127.0.0.1:3210`, gera uma chave local de 48 bytes em 
 
 ## Coletor oficial de ofertas
 
-O coletor usa `/highlights/MLB/category/{categoria}` e os endpoints oficiais de produtos e itens. Configure os nichos em `config/niches.json`. Por segurança ele nasce desligado com `COLLECTOR_ENABLED=false`.
+O coletor usa `/highlights/MLB/category/{categoria}` e os endpoints oficiais de produtos e itens. Configure as verticais e suas categorias folha em `config/niches.json`. Categorias raiz não possuem ranking consistente e são recusadas pela configuração. Por segurança, o coletor nasce desligado com `COLLECTOR_ENABLED=false`.
 
-Cada nicho pode publicar de 1 a 10 ofertas por ciclo por meio de `limit`. A configuração de produção executa dez nichos a cada 20 minutos, com uma oferta por nicho e sem a categoria de alimentos, totalizando no máximo dez ofertas por ciclo. Itens publicados são ignorados por sete dias. `COLLECTOR_SEND_DELAY_MS` serializa as mensagens e usa 15000 ms por padrão.
+A configuração de produção percorre dez verticais a cada 20 minutos, alternando suas categorias folha. Cada rodada publica de zero a dez ofertas: no máximo uma por vertical e somente quando existe desconto real em um produto do ranking de mais vendidos. Alimentos não são configurados. Um item publicado fica bloqueado globalmente por sete dias, inclusive quando aparece em outra vertical. `COLLECTOR_SEND_DELAY_MS` serializa as mensagens e usa 15000 ms por padrão.
+
+Valide todas as categorias contra a API oficial antes do deploy sem exibir o token no terminal:
+
+```powershell
+$secureToken = Read-Host "Token OAuth temporário" -AsSecureString
+$tokenPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureToken)
+try {
+  $env:MELI_ACCESS_TOKEN = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($tokenPointer)
+  npm run verify:categories
+} finally {
+  Remove-Item Env:MELI_ACCESS_TOKEN -ErrorAction SilentlyContinue
+  [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($tokenPointer)
+}
+```
+
+Cada vertical registra um resultado seguro: `published`, `empty`, `unsupported_category`, `source_error`, `affiliate_error` ou `delivery_error`. Os registros informam vertical e categoria, mas nunca incluem cookies, tokens ou chaves. Quando a sessão usada para gerar links expira, o alerta administrativo continua sendo enviado pelo WhatsApp.
 
 Para gerar uma prévia sem publicar, use `DRY_RUN=true`, `COLLECTOR_ENABLED=true` e recrie o bot. Consulte as prévias com:
 
