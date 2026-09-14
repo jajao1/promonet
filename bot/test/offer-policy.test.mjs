@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { selectOffer, formatOffer } from "../offer-policy.mjs";
+import { selectOffer, selectOffers, formatOffer } from "../offer-policy.mjs";
 const item={itemId:"MLB1",rank:1,title:"Console",status:"active",permalink:"https://produto.mercadolivre.com.br/MLB-1-console",imageUrl:"https://http2.mlstatic.com/a.jpg",price:100,originalPrice:150,categoryId:"MLB1144"};
 test("selects a valid unseen candidate and prioritizes confirmed discount",()=>{const selected=selectOffer([{...item,itemId:"MLB2",rank:0,originalPrice:null},{...item,rank:5}],{categoryId:"MLB1144",recentIds:new Set()});assert.equal(selected.itemId,"MLB1");});
 test("accepts a child-category offer returned by the requested official category scope",()=>{const selected=selectOffer([{...item,categoryId:"MLB186456",scopeCategoryId:"MLB1144"}],{categoryId:"MLB1144",recentIds:new Set()});assert.equal(selected?.itemId,"MLB1");});
+test("selects a bounded discounted batch without recent or duplicate items",()=>{const candidates=[{...item,itemId:"MLB1",rank:2,price:80,originalPrice:100},{...item,itemId:"MLB2",rank:1,price:50,originalPrice:100},{...item,itemId:"MLB3",rank:0,price:70,originalPrice:100},{...item,itemId:"MLB3",rank:3,price:70,originalPrice:100}];assert.deepEqual(selectOffers(candidates,{categoryId:item.categoryId,recentIds:new Set(["MLB2"]),limit:2}).map(x=>x.itemId),["MLB3","MLB1"]);});
 test("rejects invalid, mismatched and recently published candidates",()=>{for(const candidate of [{...item,status:"paused"},{...item,categoryId:"MLB1000"},{...item,permalink:"https://evil.example/MLB-1"},{...item,price:0}])assert.equal(selectOffer([candidate],{categoryId:"MLB1144",recentIds:new Set()}),null);assert.equal(selectOffer([item],{categoryId:"MLB1144",recentIds:new Set(["MLB1"])}),null);});
 test("formats truthful offer disclosure",()=>{const text=formatOffer(item,"https://meli.la/ours");assert.match(text,/Publicidade/);assert.match(text,/R\$\s*150,00/);assert.match(text,/33%/);assert.match(text,/https:\/\/meli\.la\/ours/);assert.doesNotMatch(formatOffer({...item,originalPrice:null},"https://meli.la/ours"),/%/);});
