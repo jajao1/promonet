@@ -14,7 +14,7 @@ import { createRequestHandler } from "./http-router.mjs";
 import { validateNiches } from "./niches.mjs";
 import { OfficialOfferSource } from "./offer-source.mjs";
 import { CollectorStore } from "./collector-store.mjs";
-import { collectOnce } from "./collector.mjs";
+import { collectDue } from "./collector.mjs";
 import { runCollectorLoop } from "./collector-runtime.mjs";
 import { PublicOffersStore } from "./public-offers-store.mjs";
 import { publicSiteHandler } from "./public-site-handler.mjs";
@@ -33,6 +33,9 @@ async function main() {
     throw Error("configuration_required");
   const oauthEnabled = env.MELI_OAUTH_ENABLED === "true";
   const collectorEnabled = env.COLLECTOR_ENABLED === "true";
+  const collectorSendDelayMs = Number(env.COLLECTOR_SEND_DELAY_MS ?? 15000);
+  if (!Number.isInteger(collectorSendDelayMs) || collectorSendDelayMs < 1000 || collectorSendDelayMs > 60000)
+    throw Error("configuration_required");
   if (oauthEnabled && (!env.MELI_CLIENT_ID || !env.MELI_CLIENT_SECRET || !env.MELI_REDIRECT_URI))
     throw Error("configuration_required");
   if (collectorEnabled && (!env.MELI_CLIENT_ID || !env.MELI_CLIENT_SECRET || !env.MELI_REDIRECT_URI))
@@ -119,7 +122,7 @@ async function main() {
     const collectorStore = new CollectorStore(pool);
     await collectorStore.init();
     const source = new OfficialOfferSource();
-    void runCollectorLoop({ enabled: true, collect: () => collectOnce({ store: collectorStore, niches, source, authorizedToken: () => authorizedToken({ oauth: oauthClient, tokens: tokenStore }), meli: clients.meli, evolution: clients.evolution, sessionAlert, dryRun }) });
+    void runCollectorLoop({ enabled: true, collect: () => collectDue({ store: collectorStore, niches, source, authorizedToken: () => authorizedToken({ oauth: oauthClient, tokens: tokenStore }), meli: clients.meli, evolution: clients.evolution, sessionAlert, dryRun, sendDelayMs: collectorSendDelayMs }) });
   }
   const stop = () => {
     running = false;

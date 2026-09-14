@@ -6,11 +6,11 @@ Preencher continuamente o site PromoMega e o grupo público de WhatsApp com ofer
 
 ## Escopo de categorias
 
-O coletor abrangerá tecnologia, games, casa, moda, beleza, saúde, esportes, ferramentas, automotivo, bebê e supermercado. Todas as categorias publicarão no mesmo grupo atualmente configurado. A configuração continuará permitindo ativar, desativar ou redirecionar cada nicho sem alteração de código.
+O coletor abrangerá tecnologia, games, casa, moda, beleza, saúde, esportes, ferramentas, automotivo e bebê. Alimentos e bebidas não serão coletados. Todas as categorias publicarão no mesmo grupo atualmente configurado. A configuração continuará permitindo ativar, desativar ou redirecionar cada nicho sem alteração de código.
 
 ## Frequência e volume
 
-Um agendador executará a cada cinco minutos. Não haverá teto diário de publicações. Cada execução buscará candidatos em todas as categorias vencidas e poderá processar vários produtos, respeitando a quantidade configurada por nicho.
+Um agendador executará a cada 20 minutos. Cada execução publicará no máximo dez ofertas, uma por categoria, quando houver candidatos válidos. Não haverá teto diário de publicações.
 
 O sistema não enviará o mesmo item novamente durante sete dias. A ausência de limite diário não elimina controles de fluxo: os envios serão serializados e espaçados para evitar rajadas contra o WhatsApp ou o Mercado Livre.
 
@@ -45,7 +45,7 @@ O sistema não enviará o mesmo item novamente durante sete dias. A ausência de
 
 ## Controles operacionais
 
-O intervalo padrão será de cinco minutos e o intervalo entre mensagens de um lote será configurável. A quantidade por ciclo será configurável por nicho e não representará limite diário. Logs não poderão conter cookies, tokens, chaves, links privados de grupos ou corpos integrais de respostas autenticadas.
+O intervalo de produção será de 20 minutos e o intervalo entre mensagens de um lote será configurável. Cada ciclo terá no máximo dez ofertas, sem teto diário. Logs não poderão conter cookies, tokens, chaves, links privados de grupos ou corpos integrais de respostas autenticadas.
 
 ## Testes e critérios de aceite
 
