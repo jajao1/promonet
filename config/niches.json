@@ -1,15 +1,14 @@
 {
   "niches": [
-    { "id": "technology", "categoryId": "MLB1000", "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 5, "limit": 3, "enabled": true },
-    { "id": "games", "categoryId": "MLB1144", "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 5, "limit": 3, "enabled": true },
-    { "id": "home", "categoryId": "MLB1574", "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 5, "limit": 3, "enabled": true },
-    { "id": "fashion", "categoryId": "MLB1430", "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 5, "limit": 3, "enabled": true },
-    { "id": "beauty", "categoryId": "MLB1246", "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 5, "limit": 3, "enabled": true },
-    { "id": "health", "categoryId": "MLB264586", "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 5, "limit": 3, "enabled": true },
-    { "id": "sports", "categoryId": "MLB1276", "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 5, "limit": 3, "enabled": true },
-    { "id": "tools", "categoryId": "MLB263532", "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 5, "limit": 3, "enabled": true },
-    { "id": "automotive", "categoryId": "MLB5672", "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 5, "limit": 3, "enabled": true },
-    { "id": "baby", "categoryId": "MLB1384", "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 5, "limit": 3, "enabled": true },
-    { "id": "grocery", "categoryId": "MLB1403", "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 5, "limit": 3, "enabled": true }
+    { "id": "technology", "categoryId": "MLB1000", "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "enabled": true },
+    { "id": "games", "categoryId": "MLB1144", "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "enabled": true },
+    { "id": "home", "categoryId": "MLB1574", "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "enabled": true },
+    { "id": "fashion", "categoryId": "MLB1430", "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "enabled": true },
+    { "id": "beauty", "categoryId": "MLB1246", "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "enabled": true },
+    { "id": "health", "categoryId": "MLB264586", "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "enabled": true },
+    { "id": "sports", "categoryId": "MLB1276", "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "enabled": true },
+    { "id": "tools", "categoryId": "MLB263532", "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "enabled": true },
+    { "id": "automotive", "categoryId": "MLB5672", "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "enabled": true },
+    { "id": "baby", "categoryId": "MLB1384", "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "enabled": true }
   ]
 }

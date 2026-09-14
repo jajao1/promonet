@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Collect and publish multiple new Mercado Livre offers from eleven general categories every five minutes without a daily cap.
+**Goal:** Collect and publish up to ten new Mercado Livre offers from ten non-food categories every twenty minutes without a daily cap.
 
 **Architecture:** Keep the existing OAuth source, affiliate converter, Evolution sender, and PostgreSQL stores. Expand niche validation, select a bounded batch per category, atomically claim every due category, and process each offer serially so a failed category or item does not block the remaining work. Seven-day publication history remains the only volume deduplication rule.
 
@@ -21,7 +21,7 @@
 - Modify `bot/collector.mjs`: process multiple niches and offers serially with partial-failure isolation.
 - Modify `bot/test/collector.test.mjs`: cover batches, multiple niches, session alerts, and ambiguous delivery.
 - Modify `bot/server.mjs`: invoke the batch collector.
-- Modify `config/niches.json`: enable eleven verified Mercado Livre categories against the current WhatsApp group.
+- Modify `config/niches.json`: enable ten verified non-food Mercado Livre categories against the current WhatsApp group.
 - Modify `README.md`: document continuous collection and the meaning of `limit`.
 
 ### Task 1: Expand the niche configuration contract
@@ -305,7 +305,7 @@ git add bot/collector.mjs bot/server.mjs bot/test/collector.test.mjs
 git commit -m "feat: publish continuous offer batches"
 ```
 
-### Task 5: Configure eleven general categories
+### Task 5: Configure ten non-food categories
 
 **Files:**
 - Modify: `config/niches.json`
@@ -315,22 +315,21 @@ git commit -m "feat: publish continuous offer batches"
 
 - [ ] **Step 1: Replace niche configuration with verified category IDs**
 
-Use the current group `120363411422374407@g.us`, tag `vijo3432338`, interval `5`, and limit `3` for each entry:
+Use the current group `120363411422374407@g.us`, tag `vijo3432338`, interval `20`, and limit `1` for each entry. Omit the `MLB1403` food category so one pass can publish at most ten offers:
 
 ```json
 {
   "niches": [
-    {"id":"technology","categoryId":"MLB1000","destinationGroup":"120363411422374407@g.us","tag":"vijo3432338","intervalMinutes":5,"limit":3,"enabled":true},
-    {"id":"games","categoryId":"MLB1144","destinationGroup":"120363411422374407@g.us","tag":"vijo3432338","intervalMinutes":5,"limit":3,"enabled":true},
-    {"id":"home","categoryId":"MLB1574","destinationGroup":"120363411422374407@g.us","tag":"vijo3432338","intervalMinutes":5,"limit":3,"enabled":true},
-    {"id":"fashion","categoryId":"MLB1430","destinationGroup":"120363411422374407@g.us","tag":"vijo3432338","intervalMinutes":5,"limit":3,"enabled":true},
-    {"id":"beauty","categoryId":"MLB1246","destinationGroup":"120363411422374407@g.us","tag":"vijo3432338","intervalMinutes":5,"limit":3,"enabled":true},
-    {"id":"health","categoryId":"MLB264586","destinationGroup":"120363411422374407@g.us","tag":"vijo3432338","intervalMinutes":5,"limit":3,"enabled":true},
-    {"id":"sports","categoryId":"MLB1276","destinationGroup":"120363411422374407@g.us","tag":"vijo3432338","intervalMinutes":5,"limit":3,"enabled":true},
-    {"id":"tools","categoryId":"MLB263532","destinationGroup":"120363411422374407@g.us","tag":"vijo3432338","intervalMinutes":5,"limit":3,"enabled":true},
-    {"id":"automotive","categoryId":"MLB5672","destinationGroup":"120363411422374407@g.us","tag":"vijo3432338","intervalMinutes":5,"limit":3,"enabled":true},
-    {"id":"baby","categoryId":"MLB1384","destinationGroup":"120363411422374407@g.us","tag":"vijo3432338","intervalMinutes":5,"limit":3,"enabled":true},
-    {"id":"grocery","categoryId":"MLB1403","destinationGroup":"120363411422374407@g.us","tag":"vijo3432338","intervalMinutes":5,"limit":3,"enabled":true}
+    {"id":"technology","categoryId":"MLB1000","destinationGroup":"120363411422374407@g.us","tag":"vijo3432338","intervalMinutes":20,"limit":1,"enabled":true},
+    {"id":"games","categoryId":"MLB1144","destinationGroup":"120363411422374407@g.us","tag":"vijo3432338","intervalMinutes":20,"limit":1,"enabled":true},
+    {"id":"home","categoryId":"MLB1574","destinationGroup":"120363411422374407@g.us","tag":"vijo3432338","intervalMinutes":20,"limit":1,"enabled":true},
+    {"id":"fashion","categoryId":"MLB1430","destinationGroup":"120363411422374407@g.us","tag":"vijo3432338","intervalMinutes":20,"limit":1,"enabled":true},
+    {"id":"beauty","categoryId":"MLB1246","destinationGroup":"120363411422374407@g.us","tag":"vijo3432338","intervalMinutes":20,"limit":1,"enabled":true},
+    {"id":"health","categoryId":"MLB264586","destinationGroup":"120363411422374407@g.us","tag":"vijo3432338","intervalMinutes":20,"limit":1,"enabled":true},
+    {"id":"sports","categoryId":"MLB1276","destinationGroup":"120363411422374407@g.us","tag":"vijo3432338","intervalMinutes":20,"limit":1,"enabled":true},
+    {"id":"tools","categoryId":"MLB263532","destinationGroup":"120363411422374407@g.us","tag":"vijo3432338","intervalMinutes":20,"limit":1,"enabled":true},
+    {"id":"automotive","categoryId":"MLB5672","destinationGroup":"120363411422374407@g.us","tag":"vijo3432338","intervalMinutes":20,"limit":1,"enabled":true},
+    {"id":"baby","categoryId":"MLB1384","destinationGroup":"120363411422374407@g.us","tag":"vijo3432338","intervalMinutes":20,"limit":1,"enabled":true}
   ]
 }
 ```
@@ -354,7 +353,7 @@ COLLECTOR_SEND_DELAY_MS: ${COLLECTOR_SEND_DELAY_MS:-15000}
 Update the collector section in `README.md` to state:
 
 ```markdown
-Cada nicho pode publicar de 1 a 10 ofertas por ciclo por meio de `limit`. O intervalo mínimo é cinco minutos, não existe teto diário e itens publicados são ignorados por sete dias. `COLLECTOR_SEND_DELAY_MS` serializa as mensagens e usa 15000 ms por padrão.
+Cada nicho pode publicar de 1 a 10 ofertas por ciclo por meio de `limit`. A produção usa dez nichos sem alimentos, intervalo de 20 minutos e uma oferta por nicho, totalizando no máximo dez ofertas por ciclo. Itens publicados são ignorados por sete dias. `COLLECTOR_SEND_DELAY_MS` serializa as mensagens e usa 15000 ms por padrão.
 ```
 
 - [ ] **Step 4: Validate configuration and run the full suite**
@@ -366,7 +365,7 @@ node -e "import('./bot/niches.mjs').then(async({validateNiches})=>console.log(va
 npm test
 ```
 
-Expected: first command prints `11`; all tests pass.
+Expected: first command prints `10`; all tests pass.
 
 - [ ] **Step 5: Commit**
 
