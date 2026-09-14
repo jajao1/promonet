@@ -138,7 +138,10 @@ async function main() {
   lock.release();
   await pool.end();
 }
-main().catch(() => {
-  console.error('{"event":"startup_failed"}');
+main().catch((error) => {
+  console.error(JSON.stringify({
+    event: "startup_failed",
+    reason: error instanceof Error ? error.message : "unknown",
+  }));
   process.exitCode = 1;
 });
