@@ -1,39 +1,48 @@
 import {setTimeout as defaultDelay} from "node:timers/promises";
-import {selectOffer,selectOffers,formatOffer} from "./offer-policy.mjs";
+import {selectOffer,formatOffer} from "./offer-policy.mjs";
 
-export async function collectDue({store,niches,source,authorizedToken,meli,evolution,sessionAlert,dryRun,delay=defaultDelay,sendDelayMs=15000}){
+function outcome(error){
+  if(error?.message==="source_unsupported_category")return"unsupported_category";
+  if(String(error?.message).startsWith("source_"))return"source_error";
+  if(["session_expired","meli_session_missing","affiliate_failed"].includes(error?.message))return"affiliate_error";
+  return"delivery_error";
+}
+
+export async function collectDue({store,niches,source,authorizedToken,meli,evolution,sessionAlert,dryRun,delay=defaultDelay,sendDelayMs=15000,logger={info(){},error(){}}}){
   const due=await store.claimDueNiches(niches);
   const summary={niches:due.length,published:0,review:0,empty:0};
   if(!due.length)return summary;
   const token=await authorizedToken();
+  const recentIds=await store.recentItemIds();
   let sessionAlerted=false;
-  for(const niche of due){
-    let nicheReview=0;
+  for(const niche of due.slice(0,10)){
+    let categoryId;
+    const finish=async result=>{await store.completeRun(niche.id,result);logger.info({event:"collector_vertical",vertical:niche.id,categoryId,result});};
     try{
-      const recentIds=await store.recentItemIds(niche.id);
-      const candidates=await source.list(niche.categoryId,token);
-      const selected=selectOffers(candidates,{categoryId:niche.categoryId,recentIds,limit:niche.limit});
-      if(!selected.length){summary.empty++;await store.completeRun(niche.id,"empty");continue;}
-      for(const offer of selected){
-        await store.savePreview(niche.id,offer,dryRun?"simulated":"selected");
-        if(dryRun)continue;
-        try{
-          const affiliateUrl=await meli.convert(offer.permalink,niche.tag,false);
-          sessionAlert?.restored();
-          await evolution.send({destination:niche.destinationGroup,text:formatOffer(offer,affiliateUrl),kind:"image",mimetype:"image/jpeg"},offer.imageUrl);
-          await store.markPublished(niche.id,offer.itemId,affiliateUrl);
-          summary.published++;
-          await delay(sendDelayMs);
-        }catch(error){
-          await store.markReview(niche.id,offer.itemId);
-          summary.review++;nicheReview++;
-          if(["session_expired","meli_session_missing"].includes(error?.message)&&!sessionAlerted){sessionAlerted=true;try{await sessionAlert?.required();}catch{}}
-        }
+      categoryId=await store.nextCategory(niche);
+      const candidates=await source.list(categoryId,token);
+      const offer=selectOffer(candidates,{categoryId,recentIds});
+      if(!offer){summary.empty++;await finish("empty");continue;}
+      await store.savePreview(niche.id,offer,dryRun?"simulated":"selected");
+      if(dryRun){await finish("simulated");continue;}
+      let affiliateUrl;
+      try{
+        affiliateUrl=await meli.convert(offer.permalink,niche.tag,false);
+        sessionAlert?.restored();
+      }catch(error){
+        await store.markReview(niche.id,offer.itemId);summary.review++;
+        if(["session_expired","meli_session_missing"].includes(error?.message)&&!sessionAlerted){sessionAlerted=true;try{await sessionAlert?.required();}catch{}}
+        await finish("affiliate_error");continue;
       }
-      await store.completeRun(niche.id,dryRun?"simulated":nicheReview?"partial":"published");
-    }catch{
-      summary.review++;nicheReview++;
-      await store.completeRun(niche.id,"review");
+      try{await evolution.send({destination:niche.destinationGroup,text:formatOffer(offer,affiliateUrl),kind:"image",mimetype:"image/jpeg"},offer.imageUrl);}
+      catch{await store.markReview(niche.id,offer.itemId);summary.review++;await finish("delivery_error");continue;}
+      await store.markPublished(niche.id,offer.itemId,affiliateUrl);
+      recentIds.add(offer.itemId);summary.published++;
+      await finish("published");
+      await delay(sendDelayMs);
+    }catch(error){
+      summary.review++;
+      await finish(outcome(error));
     }
   }
   return summary;

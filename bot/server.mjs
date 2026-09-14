@@ -122,7 +122,8 @@ async function main() {
     const collectorStore = new CollectorStore(pool);
     await collectorStore.init();
     const source = new OfficialOfferSource();
-    void runCollectorLoop({ enabled: true, collect: () => collectDue({ store: collectorStore, niches, source, authorizedToken: () => authorizedToken({ oauth: oauthClient, tokens: tokenStore }), meli: clients.meli, evolution: clients.evolution, sessionAlert, dryRun, sendDelayMs: collectorSendDelayMs }) });
+    const collectorLogger = { info: data => console.log(JSON.stringify(data)), error: data => console.error(JSON.stringify(data)) };
+    void runCollectorLoop({ enabled: true, collect: () => collectDue({ store: collectorStore, niches, source, authorizedToken: () => authorizedToken({ oauth: oauthClient, tokens: tokenStore }), meli: clients.meli, evolution: clients.evolution, sessionAlert, dryRun, sendDelayMs: collectorSendDelayMs, logger: collectorLogger }) });
   }
   const stop = () => {
     running = false;
