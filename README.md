@@ -259,6 +259,8 @@ A ponte escuta somente em `127.0.0.1:3210`, gera uma chave local de 48 bytes em 
 
 O coletor usa `/highlights/MLB/category/{categoria}` e os endpoints oficiais de produtos e itens. Configure os nichos em `config/niches.json`. Por segurança ele nasce desligado com `COLLECTOR_ENABLED=false`.
 
+Cada nicho pode publicar de 1 a 10 ofertas por ciclo por meio de `limit`. O intervalo mínimo é cinco minutos, não existe teto diário e itens publicados são ignorados por sete dias. `COLLECTOR_SEND_DELAY_MS` serializa as mensagens e usa 15000 ms por padrão.
+
 Para gerar uma prévia sem publicar, use `DRY_RUN=true`, `COLLECTOR_ENABLED=true` e recrie o bot. Consulte as prévias com:
 
 ```powershell

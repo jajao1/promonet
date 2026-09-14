@@ -108,6 +108,7 @@ services:
       DRY_RUN: ${DRY_RUN:-true}
       CONFIG_PATH: /app/config/routes.json
       COLLECTOR_ENABLED: ${COLLECTOR_ENABLED:-false}
+      COLLECTOR_SEND_DELAY_MS: ${COLLECTOR_SEND_DELAY_MS:-15000}
       NICHES_CONFIG_PATH: /app/config/niches.json
       MELI_SESSION_PATH: /run/secrets/meli-session.json
       MELI_OAUTH_ENABLED: ${MELI_OAUTH_ENABLED:-false}
