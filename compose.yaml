@@ -37,7 +37,7 @@ services:
     logging: *logs
 
   evolution:
-    image: evoapicloud/evolution-api:v2.3.2
+    image: evoapicloud/evolution-api:v2.3.7
     restart: unless-stopped
     ports:
       - '127.0.0.1:${EVOLUTION_PORT:-8080}:8080'
@@ -63,7 +63,6 @@ services:
       CACHE_REDIS_PREFIX_KEY: promonet_evolution
       CACHE_REDIS_SAVE_INSTANCES: 'true'
       CACHE_LOCAL_ENABLED: 'true'
-      CONFIG_SESSION_PHONE_VERSION: '2.3000.1033773198'
       TELEMETRY_ENABLED: 'false'
       LOG_LEVEL: ERROR,WARN
       LOG_BAILEYS: error
