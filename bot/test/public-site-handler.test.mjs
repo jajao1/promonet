@@ -89,7 +89,7 @@ test("serves allowlisted storefront assets with content type and cache policy", 
   assert.match(page.headers["content-type"], /text\/html/);
   assert.equal(page.headers["cache-control"], "no-cache");
   assert.ok(page.headers.etag);
-  assert.match(String(page.body), /PromoNet/i);
+  assert.match(String(page.body), /PromoMega/i);
   const css = response();
   await handler({ method: "GET", url: "/styles.css" }, css);
   assert.equal(css.status, 200);

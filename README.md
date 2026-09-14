@@ -1,4 +1,4 @@
-# PromoNET — bot de ofertas em Docker
+# PromoMega — bot de ofertas em Docker
 
 Captura ofertas de grupos WhatsApp autorizados via Evolution API, converte links Mercado Livre e republica texto ou imagem com legenda em destinos configurados. **O site está suspenso.**
 
@@ -7,7 +7,7 @@ Captura ofertas de grupos WhatsApp autorizados via Evolution API, converte links
 | Serviço | Função | Acesso local padrão |
 |---|---|---|
 | bot | Webhook, filtros, fila, conversão e envio | http://localhost:3000/health |
-| evolution | Conexão WhatsApp e API de mensagens (v2.3.2, sem Baileys 7 RC) | http://localhost:8080 |
+| evolution | Conexão WhatsApp e API de mensagens (v2.3.7 estável) | http://localhost:8080 |
 | postgres | Fila persistente e dados Evolution em schemas distintos | Somente rede Docker |
 | redis | Cache da Evolution | Somente rede Docker |
 

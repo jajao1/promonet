@@ -15,7 +15,8 @@ test("storefront assets expose the complete accessible offer journey", async () 
   assert.match(html, /id="offer-template"/);
   assert.match(html, /Publicidade.*comissão/is);
   assert.match(html, /<link rel="icon" type="image\/jpeg" href="\/logo\.jpg">/);
-  assert.match(html, /<img[^>]+src="\/logo\.jpg"[^>]+alt="PromoNet"/);
+  assert.match(html, /<img[^>]+src="\/logo\.jpg"[^>]+alt="PromoMega"/);
+  assert.doesNotMatch(html, /PromoNet/i);
   assert.match(html, /class="whatsapp-link"/);
   assert.match(html, /<header[^>]*>[\s\S]*class="whatsapp-link"[^>]+href="https:\/\/chat\.whatsapp\.com\/[A-Za-z0-9_-]+"/);
   for (const referenceClass of ["topbar", "main-nav", "hero-card", "community-banner", "offers-toolbar", "floating-community", "site-footer"]) {
