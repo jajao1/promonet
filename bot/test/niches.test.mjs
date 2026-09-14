@@ -1,16 +1,44 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { validateNiches } from "../niches.mjs";
-const valid = { niches: [{ id:"games", categoryId:"MLB1144", destinationGroup:"120@g.us", tag:"vijo3432338", intervalMinutes:120, limit:1, enabled:true }] };
-test("validates and freezes niches", () => { const result=validateNiches(valid); assert.equal(result[0].categoryId,"MLB1144"); assert.ok(Object.isFrozen(result[0])); });
-test("accepts shared destinations and bounded five-minute batches",()=>{const result=validateNiches({niches:[{...valid.niches[0],intervalMinutes:5,limit:3},{...valid.niches[0],id:"home",categoryId:"MLB1574",intervalMinutes:5,limit:5}]});assert.equal(result.length,2);assert.equal(result[1].limit,5);});
-test("rejects malformed or conflicting niches", () => {
+
+const vertical = {
+  id: "tools",
+  categoryIds: ["MLB262997", "MLB263831"],
+  destinationGroup: "120@g.us",
+  tag: "vijo3432338",
+  intervalMinutes: 20,
+  limit: 1,
+  enabled: true,
+};
+
+test("accepts frozen non-food verticals with leaf categories", () => {
+  const [result] = validateNiches({ niches: [vertical] });
+  assert.deepEqual(result.categoryIds, ["MLB262997", "MLB263831"]);
+  assert.ok(Object.isFrozen(result));
+  assert.ok(Object.isFrozen(result.categoryIds));
+});
+
+test("accepts shared destinations and a five-minute minimum interval", () => {
+  const result = validateNiches({ niches: [
+    { ...vertical, intervalMinutes: 5 },
+    { ...vertical, id: "sneakers", categoryIds: ["MLB23332"] },
+  ] });
+  assert.equal(result.length, 2);
+});
+
+test("rejects roots, food, duplicates, empty lists, and multi-item verticals", () => {
+  for (const categoryIds of [[], ["MLB1000"], ["MLB1403"], ["MLB262997", "MLB262997"]]) {
+    assert.throws(() => validateNiches({ niches: [{ ...vertical, categoryIds }] }), /invalid_niche/);
+  }
+  assert.throws(() => validateNiches({ niches: [{ ...vertical, limit: 2 }] }), /invalid_niche/);
+});
+
+test("rejects malformed and cross-vertical category conflicts", () => {
   for (const config of [
-    {niches:[]},
-    {niches:[{...valid.niches[0],categoryId:"bad"}]},
-    {niches:[{...valid.niches[0],intervalMinutes:4}]},
-    {niches:[{...valid.niches[0],limit:0}]},
-    {niches:[{...valid.niches[0],limit:11}]},
-    {niches:[valid.niches[0],{...valid.niches[0],id:"other"}]},
-  ]) assert.throws(()=>validateNiches(config),/invalid_/);
+    { niches: [] },
+    { niches: [{ ...vertical, categoryIds: ["bad"] }] },
+    { niches: [{ ...vertical, intervalMinutes: 4 }] },
+    { niches: [vertical, { ...vertical, id: "other", categoryIds: ["MLB263831"] }] },
+  ]) assert.throws(() => validateNiches(config), /invalid_/);
 });
