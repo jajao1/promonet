@@ -1,9 +1,10 @@
 import { randomUUID as defaultRandomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { categoryBySlug } from "./storefront-catalog.mjs";
+import { renderCategoryPage, renderErrorPage, renderHomePage, renderOfferPage } from "./seo-renderer.mjs";
 
 const staticAssets = new Map([
-  ["/", ["index.html", "text/html; charset=utf-8", "no-cache"]],
   ["/index.html", ["index.html", "text/html; charset=utf-8", "no-cache"]],
   ["/styles.css", ["styles.css", "text/css; charset=utf-8", "public, max-age=3600"]],
   ["/app.js", ["app.js", "text/javascript; charset=utf-8", "public, max-age=3600"]],
@@ -20,6 +21,23 @@ function send(res, status, value, headers = {}) {
     ...headers,
   });
   res.end(body);
+}
+
+const pageHeaders = (robots) => ({
+  "cache-control": "public, max-age=60, stale-while-revalidate=300",
+  "x-robots-tag": robots,
+  "x-content-type-options": "nosniff",
+  "referrer-policy": "strict-origin-when-cross-origin",
+  "content-security-policy": "default-src 'self'; img-src 'self' https://*.mlstatic.com; connect-src 'self'; style-src 'self'; script-src 'self'; base-uri 'none'; frame-ancestors 'none'",
+});
+
+function sendHtml(res, status, body, robots = "index,follow") {
+  res.writeHead(status, { "content-type": "text/html; charset=utf-8", "content-length": String(Buffer.byteLength(body)), ...pageHeaders(robots) });
+  res.end(body);
+}
+
+function pageError(res, status, title, message) {
+  sendHtml(res, status, renderErrorPage({ status, title, message }), "noindex,follow");
 }
 
 function parseOffers(url) {
@@ -78,6 +96,26 @@ export function publicSiteHandler({ store, randomUUID = defaultRandomUUID, siteC
       send(res, 200, { whatsAppGroupUrl: safeWhatsAppGroupUrl(siteConfig.whatsAppGroupUrl) });
       return true;
     }
+    if (url.pathname === "/") {
+      let options;
+      try { options = parseOffers(url); } catch { pageError(res, 400, "Busca inválida", "Revise os filtros e tente novamente."); return true; }
+      try {
+        const [offers, categories] = await Promise.all([store.list(options), store.categories()]);
+        sendHtml(res, 200, renderHomePage({ offers: offers.items, total: offers.total, categories, whatsAppGroupUrl: safeWhatsAppGroupUrl(siteConfig.whatsAppGroupUrl) }));
+      } catch { pageError(res, 503, "Site temporariamente indisponível", "Tente novamente em instantes."); }
+      return true;
+    }
+    const categoryMatch = url.pathname.match(/^\/categoria\/([a-z0-9_-]{1,50})$/i);
+    if (categoryMatch) {
+      const category = categoryBySlug(categoryMatch[1].toLowerCase());
+      if (!category) { pageError(res, 404, "Categoria não encontrada", "Esta categoria não existe."); return true; }
+      try {
+        const [offers, categories] = await Promise.all([store.listCategory(category.slug, { limit: 24 }), store.categories?.() ?? []]);
+        if (!offers.total) { pageError(res, 404, "Categoria sem ofertas", "Ainda não há ofertas recentes nesta categoria."); return true; }
+        sendHtml(res, 200, renderCategoryPage({ category, offers: offers.items, total: offers.total, categories }));
+      } catch { pageError(res, 503, "Site temporariamente indisponível", "Tente novamente em instantes."); }
+      return true;
+    }
     const match = url.pathname.match(/^\/oferta\/([a-z0-9_-]{1,50})\/([a-z0-9_-]{1,80})$/i);
     if (!match) {
       const asset = staticAssets.get(url.pathname);
@@ -100,13 +138,13 @@ export function publicSiteHandler({ store, randomUUID = defaultRandomUUID, siteC
       return true;
     }
     try {
-      const destination = await store.findDestination(match[1], match[2]);
-      if (!destination) { send(res, 404, { error: "offer_not_found" }, { "cache-control": "no-store" }); return true; }
-      if (!safeDestination(destination)) { send(res, 410, { error: "offer_unavailable" }, { "cache-control": "no-store" }); return true; }
-      await store.recordClick(match[1], match[2], randomUUID(), referrerHost(req.headers?.referer));
-      res.writeHead(302, { location: destination, "cache-control": "no-store", "referrer-policy": "no-referrer" });
-      res.end();
-    } catch { send(res, 503, { error: "temporarily_unavailable" }, { "cache-control": "no-store" }); }
+      const offer = await store.findOfferPage(match[1], match[2]);
+      if (!offer) { pageError(res, 404, "Oferta não encontrada", "Esta oferta não foi localizada."); return true; }
+      if (offer.status === "unavailable" || !safeDestination(offer.affiliateUrl)) { pageError(res, 410, "Oferta indisponível", "Esta oferta não está mais disponível."); return true; }
+      const related = await store.listRelated(match[1], match[2], 4);
+      const robots = offer.status === "expired" ? "noindex,follow" : "index,follow";
+      sendHtml(res, 200, renderOfferPage({ offer, related }), robots);
+    } catch { pageError(res, 503, "Site temporariamente indisponível", "Tente novamente em instantes."); }
     return true;
   };
 }

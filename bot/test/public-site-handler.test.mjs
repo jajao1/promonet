@@ -49,24 +49,10 @@ test("rejects invalid public query parameters", async () => {
   }
 });
 
-test("records a click and redirects only to approved marketplace hosts", async () => {
-  const clicks = [];
-  const handler = publicSiteHandler({ store: {
-    findDestination: async () => "https://meli.la/abc",
-    recordClick: async (...args) => clicks.push(args),
-  }, randomUUID: () => "request-id" });
-  const res = response();
-  await handler({ method: "GET", url: "/oferta/games/MLB1", headers: { referer: "https://www.google.com/search?q=x" } }, res);
-  assert.equal(res.status, 302);
-  assert.equal(res.headers.location, "https://meli.la/abc");
-  assert.equal(res.headers["cache-control"], "no-store");
-  assert.deepEqual(clicks[0], ["games", "MLB1", "request-id", "www.google.com"]);
-});
-
 test("returns fixed missing, unsafe, and unavailable responses", async () => {
   for (const [store, expected] of [
-    [{ findDestination: async () => null }, 404],
-    [{ findDestination: async () => "https://evil.example/x" }, 410],
+    [{ findOfferPage: async () => null }, 404],
+    [{ findOfferPage: async () => ({ status: "active", affiliateUrl: "https://evil.example/x" }) }, 410],
     [{ list: async () => { throw Error("secret database detail"); } }, 503],
   ]) {
     const res = response();
@@ -77,6 +63,47 @@ test("returns fixed missing, unsafe, and unavailable responses", async () => {
   }
 });
 
+test("server renders home, category, and active offer pages", async () => {
+  const active = { status: "active", category: "games", itemId: "MLB1", title: "Controle", price: 379.9, originalPrice: 499.9, imageUrl: null, publishedAt: "2026-09-14T12:00:00Z", affiliateUrl: "https://meli.la/abc" };
+  const store = {
+    list: async () => ({ items: [active], total: 1, page: 1, limit: 24 }),
+    categories: async () => [{ id: "games", count: 1 }],
+    listCategory: async () => ({ items: [active], total: 1, page: 1, limit: 24 }),
+    findOfferPage: async () => active,
+    listRelated: async () => [],
+  };
+  const handler = publicSiteHandler({ store });
+  for (const url of ["/", "/categoria/games", "/oferta/games/MLB1"]) {
+    const res = response(); await handler({ method: "GET", url, headers: {} }, res);
+    assert.equal(res.status, 200); assert.match(res.headers["content-type"], /text\/html/);
+    assert.match(String(res.body), /rel="canonical"/);
+  }
+});
+
+test("canonicalizes filtered pages to their clean landing page", async () => {
+  const store = { list: async () => ({ items: [], total: 0, page: 2, limit: 24 }), categories: async () => [] };
+  const res = response();
+  await publicSiteHandler({ store })({ method: "GET", url: "/?q=controle&sort=discount&page=2", headers: {} }, res);
+  assert.match(String(res.body), /rel="canonical" href="https:\/\/promomega\.com\.br\/"/);
+  assert.doesNotMatch(String(res.body), /canonical[^>]+\?/);
+});
+
+test("applies expired, unavailable, unknown, and empty category semantics", async () => {
+  const cases = [
+    [{ status: "expired", category: "games", itemId: "OLD", title: "Antigo", price: 99, originalPrice: null, imageUrl: null, publishedAt: "2026-09-01T12:00:00Z", affiliateUrl: "https://meli.la/old" }, 200, /noindex,follow/],
+    [{ status: "unavailable" }, 410, /Oferta indisponível/],
+    [null, 404, /Oferta não encontrada/],
+  ];
+  for (const [offer, status, body] of cases) {
+    const res = response();
+    await publicSiteHandler({ store: { findOfferPage: async () => offer, listRelated: async () => [] } })({ method: "GET", url: "/oferta/games/MLB1", headers: {} }, res);
+    assert.equal(res.status, status); assert.match(String(res.body), body);
+  }
+  const category = response();
+  await publicSiteHandler({ store: { listCategory: async () => ({ items: [], total: 0, page: 1, limit: 24 }) } })({ method: "GET", url: "/categoria/games", headers: {} }, category);
+  assert.equal(category.status, 404);
+});
+
 test("returns false for routes it does not own", async () => {
   assert.equal(await publicSiteHandler({ store: {} })({ method: "POST", url: "/webhooks/evolution" }, response()), false);
 });
@@ -84,7 +111,7 @@ test("returns false for routes it does not own", async () => {
 test("serves allowlisted storefront assets with content type and cache policy", async () => {
   const handler = publicSiteHandler({ store: {} });
   const page = response();
-  assert.equal(await handler({ method: "GET", url: "/" }, page), true);
+  assert.equal(await handler({ method: "GET", url: "/index.html" }, page), true);
   assert.equal(page.status, 200);
   assert.match(page.headers["content-type"], /text\/html/);
   assert.equal(page.headers["cache-control"], "no-cache");
