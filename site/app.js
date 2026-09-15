@@ -9,7 +9,7 @@ const elements = {
   whatsApps: document.querySelectorAll(".whatsapp-link"), heroTotal: document.querySelector("#hero-total"),
 };
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
-const categoryNames = { games: "Games", technology: "Tecnologia", home: "Casa", fashion: "Moda" };
+const categoryNames = { tenis: "Tênis", ferramentas: "Ferramentas", celulares: "Celulares", informatica: "Informática", games: "Games", eletrodomesticos: "Eletrodomésticos", beleza: "Beleza", esportes: "Esportes", automotivo: "Automotivo", bebe: "Bebê" };
 
 function discount(item) {
   return Number.isFinite(item.originalPrice) && item.originalPrice > item.price
@@ -50,9 +50,9 @@ function showSkeletons() {
 function updateUrl() {
   const params = new URLSearchParams();
   if (state.query) params.set("q", state.query);
-  if (state.category) params.set("category", state.category);
   if (state.sort !== "recent") params.set("sort", state.sort);
-  history.replaceState(null, "", `${location.pathname}${params.size ? `?${params}` : ""}`);
+  const path = state.category ? `/categoria/${state.category}` : "/";
+  history.replaceState(null, "", `${path}${params.size ? `?${params}` : ""}`);
 }
 async function loadOffers({ append = false } = {}) {
   if (state.loading) return;
@@ -83,11 +83,13 @@ async function loadCategories() {
     const response = await fetch("/api/categories", { headers: { accept: "application/json" } });
     if (!response.ok) return;
     const { categories } = await response.json();
-    for (const category of categories) {
-      const button = document.createElement("button"); button.type = "button"; button.className = "category-chip";
-      button.dataset.category = category.id; button.setAttribute("aria-pressed", "false");
-      button.textContent = `${categoryNames[category.id] ?? category.id} (${category.count})`; elements.categories.append(button);
-    }
+    const home = document.createElement("a"); home.href = "/"; home.className = "category-chip"; home.dataset.category = ""; home.textContent = "Em alta";
+    const links = categories.map((category) => {
+      const link = document.createElement("a"); link.href = `/categoria/${category.id}`; link.className = "category-chip";
+      link.dataset.category = category.id; link.textContent = `${categoryNames[category.id] ?? category.id} (${category.count})`;
+      return link;
+    });
+    elements.categories.replaceChildren(home, ...links);
   } catch { /* Offers remain usable without category shortcuts. */ }
 }
 async function loadSiteConfig() {
@@ -105,26 +107,31 @@ async function loadSiteConfig() {
     }
   } catch { /* The storefront remains usable without the community link. */ }
 }
-function selectCategory(button) {
-  state.category = button.dataset.category ?? ""; state.page = 1;
-  for (const chip of elements.categories.querySelectorAll("button")) { const active = chip === button; chip.classList.toggle("active", active); chip.setAttribute("aria-pressed", String(active)); }
-  updateUrl(); loadOffers();
+function selectCategory(link, { load = true } = {}) {
+  state.category = link?.dataset.category ?? ""; state.page = 1;
+  for (const chip of elements.categories.querySelectorAll("a[data-category]")) { const active = chip === link; chip.classList.toggle("active", active); if (active) chip.setAttribute("aria-current", "page"); else chip.removeAttribute("aria-current"); }
+  updateUrl(); if (load) loadOffers();
 }
 let searchTimer;
 elements.form.addEventListener("submit", (event) => { event.preventDefault(); clearTimeout(searchTimer); state.query = elements.search.value.trim(); state.page = 1; updateUrl(); loadOffers(); });
 elements.search.addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { state.query = elements.search.value.trim(); state.page = 1; updateUrl(); loadOffers(); }, 350); });
-elements.categories.addEventListener("click", (event) => { const button = event.target.closest("button[data-category]"); if (button) selectCategory(button); });
+elements.categories.addEventListener("click", (event) => { const link = event.target.closest("a[data-category]"); if (link && event.button === 0 && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) { event.preventDefault(); selectCategory(link); } });
 elements.sort.addEventListener("change", () => { state.sort = elements.sort.value; state.page = 1; updateUrl(); loadOffers(); });
 elements.more.addEventListener("click", () => { state.page += 1; loadOffers({ append: true }); });
 elements.retry.addEventListener("click", () => loadOffers());
 elements.clear.addEventListener("click", () => { state.query = ""; state.category = ""; state.page = 1; elements.search.value = ""; selectCategory(elements.categories.querySelector('[data-category=""]')); });
 
 const initial = new URLSearchParams(location.search);
-state.query = (initial.get("q") ?? "").slice(0, 100); state.category = initial.get("category") ?? "";
+const categoryPath = location.pathname.match(/^\/categoria\/([a-z0-9_-]{1,50})$/i);
+state.query = (initial.get("q") ?? "").slice(0, 100); state.category = categoryPath?.[1] ?? initial.get("category") ?? "";
 state.sort = initial.get("sort") === "discount" ? "discount" : "recent";
 elements.search.value = state.query; elements.sort.value = state.sort;
-document.querySelector("#current-year").textContent = String(new Date().getFullYear());
+const year = document.querySelector("#current-year"); if (year) year.textContent = String(new Date().getFullYear());
+const hasServerRenderedOffers = elements.grid.querySelector(".offer-card") !== null;
+const hasInteractiveFilters = initial.has("q") || initial.has("sort") || initial.has("page") || initial.has("category");
 await loadSiteConfig();
 await loadCategories();
 const initialCategory = elements.categories.querySelector(`[data-category="${CSS.escape(state.category)}"]`) ?? elements.categories.querySelector('[data-category=""]');
-selectCategory(initialCategory);
+selectCategory(initialCategory, { load: false });
+if (!hasServerRenderedOffers || hasInteractiveFilters) await loadOffers();
+else elements.grid.setAttribute("aria-busy", "false");

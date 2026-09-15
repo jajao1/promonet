@@ -41,6 +41,12 @@ test("storefront assets expose the complete accessible offer journey", async () 
   assert.match(js, /product-placeholder\.svg/);
   assert.match(js, /data\.items\.map\(renderOffer\)/);
   assert.match(js, /querySelectorAll\("\.whatsapp-link"\)/);
+  assert.match(js, /const hasServerRenderedOffers = elements\.grid\.querySelector\("\.offer-card"\) !== null/);
+  assert.match(js, /if \(!hasServerRenderedOffers \|\| hasInteractiveFilters\) await loadOffers\(\)/);
+  assert.doesNotMatch(js, /selectCategory\(initialCategory\);\s*$/);
+  assert.match(js, /href = `\/categoria\/\$\{category\.id\}`/);
+  assert.match(html, /id="offer-grid"/);
+  assert.match(html, /<noscript>/);
   assert.match(favicon, /<svg/);
   assert.equal(logo.subarray(0, 3).toString("hex"), "ffd8ff");
   assert.match(placeholder, /<svg/);
