@@ -51,3 +51,9 @@ test("storefront assets expose the complete accessible offer journey", async () 
   assert.equal(logo.subarray(0, 3).toString("hex"), "ffd8ff");
   assert.match(placeholder, /<svg/);
 });
+
+test("redirects www to the single canonical storefront host", async () => {
+  const caddy = await readFile(new URL("../../Caddyfile", import.meta.url), "utf8");
+  assert.match(caddy, /www\.promomega\.com\.br\s*\{[\s\S]*?redir https:\/\/promomega\.com\.br\{uri\} permanent/);
+  assert.match(caddy, /promomega\.com\.br\s*\{[\s\S]*?import promomega_app/);
+});

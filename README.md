@@ -13,6 +13,29 @@ Captura ofertas de grupos WhatsApp autorizados via Evolution API, converte links
 
 ## Site público de ofertas
 
+### SEO e rotas públicas
+
+A vitrine entrega conteúdo essencial no HTML inicial, sem depender de JavaScript para que buscadores e visitantes encontrem as ofertas:
+
+- `/`: ofertas recentes e links para categorias;
+- `/categoria/{slug}`: ofertas válidas de uma vertical;
+- `/oferta/{nicho}/{itemId}`: detalhe indexável da oferta;
+- `/ir/{nicho}/{itemId}`: registro anônimo do clique e redirecionamento afiliado;
+- `/robots.txt`: regras de rastreamento;
+- `/sitemap.xml`: home, categorias com conteúdo e ofertas atuais.
+
+Uma oferta permanece indexável por sete dias após a publicação mais recente. Depois disso, a página continua acessível com `noindex,follow`, mas sai do sitemap e a rota de saída deixa de redirecionar. Uma oferta conhecida sem destino seguro responde `410`; uma URL nunca registrada responde `404`.
+
+Validação local e pública:
+
+```bash
+npm test
+curl -fsS https://promomega.com.br/ | grep -E '<h1>|rel="canonical"|application/ld\+json'
+curl -fsS https://promomega.com.br/robots.txt
+curl -fsS https://promomega.com.br/sitemap.xml
+curl -sI https://www.promomega.com.br/categoria/games
+```
+
 O mesmo serviço `bot` publica a vitrine em `http://localhost:${BOT_PORT}` (porta `3001` no ambiente atual). O site lista apenas promoções confirmadas na tabela de publicações e nunca expõe o link de afiliado diretamente na API.
 
 - `GET /api/offers?q=&category=&sort=recent|discount&page=&limit=` lista ofertas publicadas; `limit` é limitado a 48.

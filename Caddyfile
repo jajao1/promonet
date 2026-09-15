@@ -13,8 +13,12 @@
 	import promomega_app
 }
 
-promomega.com.br, www.promomega.com.br {
+promomega.com.br {
 	import promomega_app
+}
+
+www.promomega.com.br {
+	redir https://promomega.com.br{uri} permanent
 }
 
 evolution.promomega.com.br {
