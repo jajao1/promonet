@@ -1,4 +1,24 @@
 import { marketplaceUrl } from "./core.mjs";
+const MAX_EVOLUTION_MEDIA_ENVELOPE_BYTES = 7 * 1024 * 1024;
+const MAX_EVOLUTION_JPEG_BYTES = Math.floor(MAX_EVOLUTION_MEDIA_ENVELOPE_BYTES * 3 / 4);
+
+function validateJpegBase64(media) {
+  if (
+    typeof media !== "string" ||
+    media.length === 0 ||
+    media.length > MAX_EVOLUTION_MEDIA_ENVELOPE_BYTES ||
+    media.length % 4 !== 0 ||
+    !/^[A-Za-z0-9+/]*={0,2}$/.test(media)
+  ) throw Error("media_invalid");
+  const decoded = Buffer.from(media, "base64");
+  if (
+    decoded.length < 4 || decoded.length > MAX_EVOLUTION_JPEG_BYTES ||
+    decoded.toString("base64") !== media ||
+    decoded[0] !== 0xff || decoded[1] !== 0xd8 ||
+    decoded.at(-2) !== 0xff || decoded.at(-1) !== 0xd9
+  ) throw Error("media_invalid");
+}
+
 async function jsonRequest(fetch, url, body, headers, max = 1024 * 1024) {
   try {
     const response = await fetch(url, {
@@ -144,6 +164,10 @@ export class EvolutionClient {
     return result.base64;
   }
   async send(job, media) {
+    if (job.kind === "image") {
+      if (job.mimetype !== "image/jpeg") throw Error("media_invalid");
+      validateJpegBase64(media);
+    }
     const body =
       job.kind === "image"
         ? {
@@ -154,10 +178,14 @@ export class EvolutionClient {
             media,
           }
         : { number: job.destination, text: job.text };
+    if (job.kind === "image" && Buffer.byteLength(JSON.stringify(body), "utf8") > MAX_EVOLUTION_MEDIA_ENVELOPE_BYTES) {
+      throw Error("media_invalid");
+    }
     const result = await this.request(
       job.kind === "image" ? "message/sendMedia" : "message/sendText",
       body,
     );
     if (!result.key?.id) throw Error("send_acknowledgement_missing");
+    return { key: { id: result.key.id } };
   }
 }

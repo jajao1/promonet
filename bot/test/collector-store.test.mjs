@@ -24,12 +24,15 @@ function deferred() {
 class BehavioralDatabase {
   constructor(rows = [], { incidents = [], hasClaimTokenColumn = true } = {}) {
     this.identities = new Map(rows.map((row) => [row.identity_key, { ...row }]));
+    this.publications = [];
+    this.previews = new Map();
     this.incidents = new Map(incidents.map((row) => [row.incident_key, { ...row }]));
     this.hasClaimTokenColumn = hasClaimTokenColumn;
     this.rounds = [];
     this.calls = [];
     this.locks = new Map();
     this.failNextReservationInsert = false;
+    this.failNextFinalizationInsert = false;
     this.failRollback = false;
     this.releases = [];
     this.now = new Date();
@@ -74,9 +77,35 @@ class BehavioralDatabase {
       const cutoff = Date.now() - args[0] * 24 * 60 * 60 * 1_000;
       return {
         rows: [...this.identities.values()]
-          .filter((row) => row.published_at && new Date(row.published_at).getTime() >= cutoff)
+          .filter((row) =>
+            (row.published_at && new Date(row.published_at).getTime() >= cutoff) ||
+            (row.review_until && new Date(row.review_until).getTime() > this.now.getTime())
+          )
           .map((row) => ({ identity_key: row.identity_key })),
       };
+    }
+    if (/UPDATE promonet\.offer_identity_keys[\s\S]*review_until=/i.test(sql)) {
+      let count = 0;
+      for (const [key, row] of this.identities) {
+        if (row.reservation_id === args[0] && !row.published_at) {
+          this.identities.set(key, {
+            ...row,
+            reservation_id: null,
+            reserved_until: null,
+            review_until: new Date(this.now.getTime() + args[1] * 86_400_000),
+          });
+          count++;
+        }
+      }
+      return { rows: [], rowCount: count };
+    }
+    if (/UPDATE promonet\.offer_identity_keys[\s\S]*reserved_until=now\(\)\+\(\$3 \* interval '1 day'\)/i.test(sql)) {
+      const rows = args[1].map((key) => this.identities.get(key));
+      if (rows.some((row) => !row || row.reservation_id !== args[0] || !row.reserved_until || row.reserved_until <= this.now)) {
+        return { rows: [], rowCount: 0 };
+      }
+      for (const row of rows) row.reserved_until = new Date(this.now.getTime() + args[2] * 86_400_000);
+      return { rows: rows.map((row) => ({ identity_key: row.identity_key })), rowCount: rows.length };
     }
     if (/UPDATE promonet\.offer_identity_keys[\s\S]*published_at=now\(\)/i.test(sql)) {
       let count = 0;
@@ -177,6 +206,8 @@ class BehavioralClient {
   constructor(db) {
     this.db = db;
     this.pending = new Map();
+    this.pendingPublications = [];
+    this.pendingPreviews = new Map();
     this.inTransaction = false;
   }
 
@@ -196,7 +227,11 @@ class BehavioralClient {
         if (row === null) this.db.identities.delete(key);
         else this.db.identities.set(key, row);
       }
+      this.db.publications.push(...this.pendingPublications);
+      for (const [key, row] of this.pendingPreviews) this.db.previews.set(key, row);
       this.pending.clear();
+      this.pendingPublications = [];
+      this.pendingPreviews.clear();
       this.inTransaction = false;
       this.db.release(this);
       return { rows: [] };
@@ -204,6 +239,8 @@ class BehavioralClient {
     if (sql === "ROLLBACK") {
       if (this.db.failRollback) throw Error("simulated_rollback_failure");
       this.pending.clear();
+      this.pendingPublications = [];
+      this.pendingPreviews.clear();
       this.inTransaction = false;
       this.db.release(this);
       return { rows: [] };
@@ -218,11 +255,45 @@ class BehavioralClient {
     if (/set_config\('lock_timeout'/i.test(sql)) {
       return { rows: [] };
     }
+    if (/SELECT identity_key,niche_id,item_id[\s\S]*reservation_id=\$1::uuid[\s\S]*FOR UPDATE/i.test(sql)) {
+      await this.db.acquire(`finalize:${args[0]}`, this);
+      return {
+        rows: [...this.db.identities.values()]
+          .filter((row) => row.reservation_id === args[0] && !row.published_at)
+          .map((row) => ({ identity_key: row.identity_key, niche_id: row.niche_id, item_id: row.item_id })),
+      };
+    }
+    if (/UPDATE promonet\.offer_identity_keys[\s\S]*published_at=now\(\)[\s\S]*reservation_id=\$1::uuid/i.test(sql)) {
+      let count = 0;
+      for (const [key, row] of this.db.identities) {
+        if (row.reservation_id === args[0] && !row.published_at) {
+          this.pending.set(key, { ...row, published_at: new Date(this.db.now), reservation_id: null, reserved_until: null, review_until: null });
+          count++;
+        }
+      }
+      return { rows: [], rowCount: count };
+    }
+    if (/INSERT INTO promonet\.offer_publications/i.test(sql)) {
+      if (this.db.failNextFinalizationInsert) {
+        this.db.failNextFinalizationInsert = false;
+        throw Error("simulated_finalization_failure");
+      }
+      if (this.db.publications.some((row) => row.nicheId === args[0] && row.itemId === args[1])) return { rows: [], rowCount: 0 };
+      this.pendingPublications.push({ nicheId: args[0], itemId: args[1], affiliateUrl: args[2] });
+      return { rows: [{ item_id: args[1] }], rowCount: 1 };
+    }
+    if (/UPDATE promonet\.offer_previews[\s\S]*state='published'/i.test(sql)) {
+      const key = `${args[0]}:${args[1]}`;
+      const current = this.db.previews.get(key);
+      if (!current) return { rows: [], rowCount: 0 };
+      this.pendingPreviews.set(key, { ...current, state: "published", affiliateUrl: args[2] });
+      return { rows: [], rowCount: 1 };
+    }
     if (/DELETE FROM promonet\.offer_identity_keys/i.test(sql)) {
       const now = new Date(args[1] ?? this.db.now).getTime();
       for (const key of args[0]) {
         const row = this.view(key);
-        if (row && !row.published_at && new Date(row.reserved_until).getTime() <= now) {
+        if (row && !row.published_at && row.reserved_until && new Date(row.reserved_until).getTime() <= now) {
           this.pending.set(key, null);
         }
       }
@@ -235,6 +306,7 @@ class BehavioralClient {
         .map((key) => this.view(key))
         .filter((row) => row && (
           (row.published_at && new Date(row.published_at).getTime() >= cutoff) ||
+          (row.review_until && new Date(row.review_until).getTime() > now) ||
           (row.reservation_id && new Date(row.reserved_until).getTime() > now)
         ))
         .map((row) => ({ identity_key: row.identity_key }));
@@ -252,6 +324,7 @@ class BehavioralClient {
           reservation_id: args[1],
           reserved_until: new Date(reservationNow + 10 * 60 * 1_000),
           published_at: null,
+          review_until: null,
           niche_id: args[2],
           item_id: args[3],
         });
@@ -265,6 +338,8 @@ class BehavioralClient {
     this.db.releases.push(force);
     if (force) {
       this.pending.clear();
+      this.pendingPublications = [];
+      this.pendingPreviews.clear();
       this.inTransaction = false;
       this.db.release(this);
       return;
@@ -296,6 +371,8 @@ test("creates durable collector schema and saves previews without secrets", asyn
   assert.match(schema, /CONSTRAINT offer_identity_keys_identity_key_format_check/i);
   assert.match(schema, /offer_identity_keys_identity_key_check[\s\S]*DROP CONSTRAINT/i);
   assert.match(schema, /reserved_until TIMESTAMPTZ/i);
+  assert.match(schema, /review_until TIMESTAMPTZ/i);
+  assert.match(schema, /ADD COLUMN IF NOT EXISTS review_until TIMESTAMPTZ/i);
   assert.match(schema, /collector_rounds[\s\S]*metrics JSONB NOT NULL/i);
   assert.match(schema, /collector_incidents[\s\S]*active BOOLEAN NOT NULL DEFAULT false/i);
   assert.match(schema, /collector_incidents[\s\S]*claim_until TIMESTAMPTZ/i);
@@ -564,6 +641,84 @@ test("confirmation publishes only after acknowledgement and release removes only
   }), true);
   assert.equal(await store.releaseOffer(RESERVATION_B), true);
   assert.equal(db.identities.has(ITEM_2), false);
+});
+
+test("finalizes identities publication and preview atomically with one concurrent winner", async () => {
+  const db = new BehavioralDatabase();
+  const store = new CollectorStore(db);
+  db.previews.set("games:MLB1", { state: "selected" });
+  assert.equal(await store.reserveOffer([ITEM_1, PRODUCT], {
+    nicheId: "games", itemId: "MLB1", reservationId: RESERVATION_A,
+  }), true);
+
+  const attempts = await Promise.all([
+    store.finalizePublication(RESERVATION_A, "games", "MLB1", "https://meli.la/ours"),
+    store.finalizePublication(RESERVATION_A, "games", "MLB1", "https://meli.la/ours"),
+  ]);
+  assert.deepEqual(attempts.sort(), [false, true]);
+  assert.equal(db.publications.length, 1);
+  assert.equal(db.previews.get("games:MLB1").state, "published");
+  assert.ok([...db.identities.values()].every((row) => row.published_at && !row.reservation_id));
+});
+
+test("finalization rolls back every write and poisons the client only when rollback fails", async () => {
+  const db = new BehavioralDatabase();
+  const store = new CollectorStore(db);
+  db.previews.set("games:MLB1", { state: "selected" });
+  await store.reserveOffer([ITEM_1, PRODUCT], {
+    nicheId: "games", itemId: "MLB1", reservationId: RESERVATION_A,
+  });
+  db.failNextFinalizationInsert = true;
+  await assert.rejects(
+    () => store.finalizePublication(RESERVATION_A, "games", "MLB1", "https://meli.la/ours"),
+    /simulated_finalization_failure/,
+  );
+  assert.equal(db.publications.length, 0);
+  assert.equal(db.previews.get("games:MLB1").state, "selected");
+  assert.ok([...db.identities.values()].every((row) => !row.published_at && row.reservation_id === RESERVATION_A));
+  assert.equal(db.releases.at(-1), false);
+
+  db.failNextFinalizationInsert = true;
+  db.failRollback = true;
+  await assert.rejects(
+    () => store.finalizePublication(RESERVATION_A, "games", "MLB1", "https://meli.la/ours"),
+    /simulated_finalization_failure/,
+  );
+  assert.equal(db.releases.at(-1), true);
+});
+
+test("quarantines an ambiguous reservation for seven days without marking it published", async () => {
+  const db = new BehavioralDatabase();
+  const store = new CollectorStore(db);
+  await store.reserveOffer([ITEM_1, PRODUCT], {
+    nicheId: "games", itemId: "MLB1", reservationId: RESERVATION_A,
+  });
+  assert.equal(await store.quarantineOffer(RESERVATION_A), true);
+  assert.deepEqual(await store.recentIdentityKeys(), new Set([ITEM_1, PRODUCT]));
+  assert.ok([...db.identities.values()].every((row) => !row.published_at && !row.reservation_id && row.review_until));
+  assert.equal(await store.reserveOffer([ITEM_1, PRODUCT], {
+    nicheId: "games", itemId: "MLB1", reservationId: RESERVATION_B,
+  }), false);
+  db.now = new Date(db.now.getTime() + 8 * 86_400_000);
+  assert.equal(await store.reserveOffer([ITEM_1, PRODUCT], {
+    nicheId: "games", itemId: "MLB1", reservationId: RESERVATION_B,
+  }), true);
+});
+
+test("rechecks every reserved identity and arms a seven-day hold immediately before delivery", async () => {
+  const db = new BehavioralDatabase();
+  const store = new CollectorStore(db);
+  await store.reserveOffer([ITEM_1, PRODUCT], {
+    nicheId: "games", itemId: "MLB1", reservationId: RESERVATION_A,
+  });
+  assert.equal(await store.prepareDelivery(RESERVATION_A, [ITEM_1, PRODUCT]), true);
+  assert.ok([...db.identities.values()].every((row) =>
+    row.reserved_until.getTime() === db.now.getTime() + 7 * 86_400_000
+  ));
+
+  db.identities.get(PRODUCT).reservation_id = RESERVATION_B;
+  assert.equal(await store.prepareDelivery(RESERVATION_A, [ITEM_1, PRODUCT]), false);
+  assert.equal(db.identities.get(ITEM_1).reservation_id, RESERVATION_A);
 });
 
 test("expired unconfirmed reservations are reclaimed", async () => {

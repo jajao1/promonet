@@ -8,14 +8,17 @@ const INCIDENT_CLAIM_SECONDS = 5 * 60;
 // bigint singleton locks. "PROM" scopes the second integer to reservations.
 const RESERVATION_LOCK_NAMESPACE = 0x50524f4d;
 const RESERVATION_LOCK_TIMEOUT = "5s";
-const ROUND_METRICS = new Set([
+export const COLLECTOR_ROUND_METRIC_KEYS = Object.freeze([
   "claimed",
   "discovered",
   "eligible",
   "rejected",
   "rejectedFood",
+  "rejectedIneligible",
   "rejectedRecent",
   "rejectedFingerprint",
+  "rejectedQuota",
+  "rejectedDuplicate",
   "skipped",
   "reserved",
   "reservationRejected",
@@ -28,7 +31,9 @@ const ROUND_METRICS = new Set([
   "sessionFailed",
   "composeFailed",
   "deliveryFailed",
+  "finalizationFailed",
 ]);
+const ROUND_METRICS = new Set(COLLECTOR_ROUND_METRIC_KEYS);
 
 function validText(value) {
   return typeof value === "string" && value.trim().length > 0 && value.length <= 128;
@@ -40,6 +45,13 @@ function requireUuid(value, name) {
 
 function requireIncidentKey(key) {
   if (typeof key !== "string" || !INCIDENT_KEY.test(key)) throw Error("invalid_incident_key");
+}
+
+function requireIdentityKeys(keys) {
+  if (!Array.isArray(keys) || keys.length === 0 || keys.some((key) =>
+    typeof key !== "string" || !IDENTITY_KEY.test(key)
+  )) throw Error("invalid_identity_keys");
+  return [...new Set(keys)].sort();
 }
 
 function reservationLockIds(keys) {
@@ -109,10 +121,12 @@ CREATE TABLE IF NOT EXISTS promonet.offer_identity_keys(
   reservation_id UUID,
   reserved_until TIMESTAMPTZ,
   published_at TIMESTAMPTZ,
+  review_until TIMESTAMPTZ,
   niche_id TEXT,
   item_id TEXT,
   CHECK((reservation_id IS NULL) = (reserved_until IS NULL))
 );
+ALTER TABLE promonet.offer_identity_keys ADD COLUMN IF NOT EXISTS review_until TIMESTAMPTZ;
 DO $identity_constraint_migration$
 BEGIN
   IF EXISTS(
@@ -154,6 +168,8 @@ CREATE INDEX IF NOT EXISTS offer_identity_keys_reserved_until_idx
   ON promonet.offer_identity_keys(reserved_until) WHERE reservation_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS offer_identity_keys_reservation_id_idx
   ON promonet.offer_identity_keys(reservation_id) WHERE reservation_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS offer_identity_keys_review_until_idx
+  ON promonet.offer_identity_keys(review_until) WHERE review_until IS NOT NULL;
 CREATE TABLE IF NOT EXISTS promonet.collector_rounds(
   round_id UUID PRIMARY KEY,
   started_at TIMESTAMPTZ NOT NULL,
@@ -251,23 +267,19 @@ CREATE INDEX IF NOT EXISTS collector_incidents_active_idx
     const result = await this.db.query(
       `SELECT DISTINCT identity_key
        FROM promonet.offer_identity_keys
-       WHERE published_at >= now() - ($1 * interval '1 day')`,
+       WHERE published_at >= now() - ($1 * interval '1 day')
+          OR review_until > now()`,
       [retentionDays],
     );
     return new Set(result.rows.map((row) => row.identity_key));
   }
 
   async reserveOffer(keys, options = {}) {
-    if (!Array.isArray(keys) || keys.length === 0 || keys.some((key) =>
-      typeof key !== "string" || !IDENTITY_KEY.test(key)
-    )) {
-      throw Error("invalid_identity_keys");
-    }
+    const uniqueKeys = requireIdentityKeys(keys);
     if (!validText(options.nicheId)) throw Error("invalid_niche_id");
     if (!validText(options.itemId)) throw Error("invalid_item_id");
     requireUuid(options.reservationId, "reservation_id");
 
-    const uniqueKeys = [...new Set(keys)].sort();
     const lockIds = reservationLockIds(uniqueKeys);
     const client = await this.db.connect();
     let transactionOpen = false;
@@ -303,6 +315,7 @@ CREATE INDEX IF NOT EXISTS collector_incidents_active_idx
          WHERE identity_key=ANY($1::text[])
            AND (
              published_at >= $2::timestamptz-interval '7 days'
+             OR review_until > $2::timestamptz
              OR (reservation_id IS NOT NULL AND reserved_until > $2::timestamptz)
            )
          LIMIT 1`,
@@ -324,6 +337,7 @@ CREATE INDEX IF NOT EXISTS collector_incidents_active_idx
            reservation_id=EXCLUDED.reservation_id,
            reserved_until=EXCLUDED.reserved_until,
            published_at=NULL,
+           review_until=NULL,
            niche_id=EXCLUDED.niche_id,
            item_id=EXCLUDED.item_id
          RETURNING identity_key`,
@@ -376,6 +390,113 @@ CREATE INDEX IF NOT EXISTS collector_incidents_active_idx
       [reservationId],
     );
     return result.rowCount > 0;
+  }
+
+  async quarantineOffer(reservationId) {
+    requireUuid(reservationId, "reservation_id");
+    const result = await this.db.query(
+      `UPDATE promonet.offer_identity_keys
+       SET reservation_id=NULL,reserved_until=NULL,
+           review_until=now()+($2 * interval '1 day')
+       WHERE reservation_id=$1::uuid AND published_at IS NULL`,
+      [reservationId, 7],
+    );
+    return result.rowCount > 0;
+  }
+
+  async prepareDelivery(reservationId, keys) {
+    requireUuid(reservationId, "reservation_id");
+    const uniqueKeys = requireIdentityKeys(keys);
+    const result = await this.db.query(
+      `UPDATE promonet.offer_identity_keys
+       SET reserved_until=now()+($3 * interval '1 day')
+       WHERE reservation_id=$1::uuid
+         AND identity_key=ANY($2::text[])
+         AND published_at IS NULL
+         AND reserved_until>now()
+         AND (
+           SELECT count(*)
+           FROM promonet.offer_identity_keys AS owned
+           WHERE owned.reservation_id=$1::uuid
+             AND owned.identity_key=ANY($2::text[])
+             AND owned.published_at IS NULL
+             AND owned.reserved_until>now()
+         )=cardinality($2::text[])
+       RETURNING identity_key`,
+      [reservationId, uniqueKeys, 7],
+    );
+    return result.rowCount === uniqueKeys.length;
+  }
+
+  async finalizePublication(reservationId, nicheId, itemId, url) {
+    requireUuid(reservationId, "reservation_id");
+    if (!validText(nicheId)) throw Error("invalid_niche_id");
+    if (!validText(itemId)) throw Error("invalid_item_id");
+    if (!validText(url)) throw Error("invalid_affiliate_url");
+
+    const client = await this.db.connect();
+    let transactionOpen = false;
+    let reusableClient = false;
+    try {
+      await client.query("BEGIN");
+      transactionOpen = true;
+      const reserved = await client.query(
+        `SELECT identity_key,niche_id,item_id
+         FROM promonet.offer_identity_keys
+         WHERE reservation_id=$1::uuid AND published_at IS NULL
+         FOR UPDATE`,
+        [reservationId],
+      );
+      if (!reserved.rows.length) {
+        await client.query("COMMIT");
+        transactionOpen = false;
+        reusableClient = true;
+        return false;
+      }
+      if (reserved.rows.some((row) => row.niche_id !== nicheId || row.item_id !== itemId)) {
+        throw Error("finalization_reservation_mismatch");
+      }
+      const confirmed = await client.query(
+        `UPDATE promonet.offer_identity_keys
+         SET published_at=now(),reservation_id=NULL,reserved_until=NULL,review_until=NULL
+         WHERE reservation_id=$1::uuid AND published_at IS NULL`,
+        [reservationId],
+      );
+      if (confirmed.rowCount !== reserved.rows.length) throw Error("finalization_incomplete");
+      const publication = await client.query(
+        `INSERT INTO promonet.offer_publications(niche_id,item_id,affiliate_url)
+         VALUES($1,$2,$3)
+         ON CONFLICT DO NOTHING
+         RETURNING item_id`,
+        [nicheId, itemId, url],
+      );
+      if (publication.rowCount !== 1) throw Error("finalization_publication_conflict");
+      const preview = await client.query(
+        `UPDATE promonet.offer_previews
+         SET state='published',affiliate_url=$3,updated_at=now()
+         WHERE niche_id=$1 AND item_id=$2`,
+        [nicheId, itemId, url],
+      );
+      if (preview.rowCount !== 1) throw Error("finalization_preview_missing");
+      await client.query("COMMIT");
+      transactionOpen = false;
+      reusableClient = true;
+      return true;
+    } catch (error) {
+      if (transactionOpen) {
+        try {
+          await client.query("ROLLBACK");
+          transactionOpen = false;
+          reusableClient = true;
+        } catch {
+          // Preserve the transaction's original failure.
+        }
+      }
+      throw error;
+    } finally {
+      if (reusableClient) client.release();
+      else client.release(true);
+    }
   }
 
   async recordRound(roundId, summary, startedAt) {

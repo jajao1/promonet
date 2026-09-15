@@ -189,3 +189,68 @@ test("Evolution sends text and validates acknowledgement", async () => {
   assert.equal(call.body.text, "hi");
   assert.match(call.url, /sendText\/main$/);
 });
+
+test("Evolution accepts a canonical bounded JPEG base64 envelope and returns its acknowledgement", async () => {
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString("base64");
+  let body;
+  const client = new mod.EvolutionClient({
+    url: "http://evolution:8080",
+    apiKey: "secret",
+    instance: "main",
+    fetch: async (_url, options) => {
+      body = JSON.parse(options.body);
+      return Response.json({ key: { id: "sent-image" } });
+    },
+  });
+  assert.deepEqual(await client.send({
+    destination: "d@g.us",
+    text: "offer",
+    kind: "image",
+    mimetype: "image/jpeg",
+  }, jpeg), { key: { id: "sent-image" } });
+  assert.equal(body.media, jpeg);
+  assert.equal(body.mimetype, "image/jpeg");
+});
+
+test("Evolution rejects URLs malformed base64 and oversized image envelopes before POST", async () => {
+  let calls = 0;
+  const client = new mod.EvolutionClient({
+    url: "http://evolution:8080",
+    apiKey: "secret",
+    instance: "main",
+    fetch: async () => {
+      calls++;
+      return Response.json({ key: { id: "unexpected" } });
+    },
+  });
+  const job = { destination: "d@g.us", text: "offer", kind: "image", mimetype: "image/jpeg" };
+  for (const media of [
+    "https://http2.mlstatic.com/product.jpg",
+    "//79AA==",
+    "abcd===",
+    Buffer.alloc(7 * 1024 * 1024, "a").toString("base64"),
+  ]) await assert.rejects(() => client.send(job, media), /media_invalid/);
+  assert.equal(calls, 0);
+});
+
+test("Evolution bounds the complete encoded JSON image envelope rather than only its media field", async () => {
+  const bytes = Buffer.alloc(5_505_000);
+  bytes.set([0xff, 0xd8, 0xff], 0);
+  bytes.set([0xff, 0xd9], bytes.length - 2);
+  const media = bytes.toString("base64");
+  assert.ok(media.length < 7 * 1024 * 1024);
+  let calls = 0;
+  const client = new mod.EvolutionClient({
+    url: "http://evolution:8080",
+    apiKey: "secret",
+    instance: "main",
+    fetch: async () => { calls++; return Response.json({ key: { id: "unexpected" } }); },
+  });
+  await assert.rejects(() => client.send({
+    destination: "destination@g.us",
+    text: "caption adds bytes to the bounded envelope",
+    kind: "image",
+    mimetype: "image/jpeg",
+  }, media), /media_invalid/);
+  assert.equal(calls, 0);
+});
