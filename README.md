@@ -282,7 +282,15 @@ A ponte escuta somente em `127.0.0.1:3210`, gera uma chave local de 48 bytes em 
 
 O coletor usa `/highlights/MLB/category/{categoria}` e os endpoints oficiais de produtos e itens. Configure as verticais e suas categorias folha em `config/niches.json`. Categorias raiz não possuem ranking consistente e são recusadas pela configuração. Por segurança, o coletor nasce desligado com `COLLECTOR_ENABLED=false`.
 
-A configuração de produção percorre dez verticais a cada 20 minutos, alternando suas categorias folha. Cada rodada publica de zero a dez ofertas: no máximo uma por vertical e somente quando existe desconto real em um produto do ranking de mais vendidos. Alimentos não são configurados. Um item publicado fica bloqueado globalmente por sete dias, inclusive quando aparece em outra vertical. `COLLECTOR_SEND_DELAY_MS` serializa as mensagens e usa 15000 ms por padrão.
+A configuração de produção inicia uma rodada a cada 20 minutos somente na janela diária `[07:00, 23:00)` em `America/Sao_Paulo` (horário de Brasília). Fora dessa janela não há coleta nem publicação; às 07:00 o processo retoma com uma rodada normal, sem criar ou acumular backlog das execuções perdidas.
+
+Cada rodada publica no máximo 10 ofertas e no máximo 2 por nicho. A rotação inclui roupas, acessórios, calçados, ferramentas, eletrônicos, casa, beleza, esportes, bebês, automotivo e brinquedos. Alimentos e bebidas são excluídos antes da seleção. A deduplicação conservadora compara o ID do item, a URL canônica do produto e o fingerprint de marca/modelo durante 7 dias, globalmente e mesmo após reiniciar o container.
+
+Toda publicação usa um card JPEG de 1080×1080, composto localmente com Sharp a partir da imagem do produto e do logo PromoMega. Uma imagem inválida faz a oferta ser ignorada. A falha ao criar o link afiliado nunca usa como fallback ou substituto o link normal do produto.
+
+Uma sessão de afiliado expirada abre um incidente persistente com lease e envia um alerta por incidente ao administrador `5543991724961`; novas ofertas permanecem pausadas enquanto a falha continua. Depois que uma conversão autenticada volta a funcionar, o incidente é encerrado e uma expiração futura pode gerar outro alerta. Para substituir a sessão, copie uma nova requisição `createLink`, importe-a com `./scripts/import-meli-session.ps1` e reinicie a ponte e o bot sem registrar cookies nos logs.
+
+Os padrões ficam explícitos em `.env.example`: `COLLECTOR_INTERVAL_MINUTES=20`, `COLLECTOR_TIME_ZONE=America/Sao_Paulo`, `COLLECTOR_START_HOUR=7`, `COLLECTOR_END_HOUR=23`, `COLLECTOR_ROUND_LIMIT=10`, `COLLECTOR_MAX_PER_NICHE=2`, `COLLECTOR_DEDUP_DAYS=7`, `OFFER_CARD_LOGO_PATH=/app/site/logo.jpg` e `ADMIN_WHATSAPP=5543991724961`. `COLLECTOR_SEND_DELAY_MS` continua limitando o espaçamento entre mensagens e usa 15000 ms por padrão.
 
 Valide todas as categorias contra a API oficial antes do deploy sem exibir o token no terminal:
 
@@ -300,7 +308,13 @@ try {
 
 Cada vertical registra um resultado seguro: `published`, `empty`, `unsupported_category`, `source_error`, `affiliate_error` ou `delivery_error`. Os registros informam vertical e categoria, mas nunca incluem cookies, tokens ou chaves. Quando a sessão usada para gerar links expira, o alerta administrativo continua sendo enviado pelo WhatsApp.
 
-Para gerar uma prévia sem publicar, use `DRY_RUN=true`, `COLLECTOR_ENABLED=true` e recrie o bot. Consulte as prévias com:
+Consulte somente os contadores sanitizados das rodadas recentes, sem títulos, URLs ou credenciais:
+
+```powershell
+docker compose exec -T postgres psql -U promonet -d promonet -c "SELECT started_at,finished_at,metrics->>'discovered' AS discovered,metrics->>'rejectedFood' AS rejected_food,metrics->>'rejectedFingerprint' AS rejected_fingerprint,metrics->>'rejectedQuota' AS rejected_quota,metrics->>'composeFailed' AS compose_failed,metrics->>'affiliateFailed' AS affiliate_failed,metrics->>'published' AS published,metrics->>'deliveryFailed' AS delivery_failed FROM promonet.collector_rounds ORDER BY started_at DESC LIMIT 20"
+```
+
+Para executar uma rodada simulada sem rede de imagem, conversão afiliada nem publicação, use `DRY_RUN=true`, `COLLECTOR_ENABLED=true` e recrie o bot durante a janela configurada. Consulte as prévias com:
 
 ```powershell
 docker compose exec -T postgres psql -U promonet -d promonet -c "SELECT niche_id,item_id,title,price,original_price,state,created_at FROM promonet.offer_previews ORDER BY updated_at DESC LIMIT 10"

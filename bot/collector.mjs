@@ -386,7 +386,8 @@ export async function collectDue({
   store, niches, source, authorizedToken, meli, evolution, sessionAlert, dryRun,
   composeCard = composeOfferCard, randomUUID = defaultRandomUUID,
   now = () => new Date(), delay = defaultDelay, sendDelayMs = 15000,
-  roundLimit = 10, perNiche = 2, logger = { info() {}, error() {} },
+  roundLimit = 10, perNiche = 2, retentionDays = 7,
+  logger = { info() {}, error() {} },
 }) {
   const roundId = randomUUID();
   const startedAt = now();
@@ -446,7 +447,7 @@ export async function collectDue({
 
     let recentIdentityKeys;
     try {
-      recentIdentityKeys = await store.recentIdentityKeys(7);
+      recentIdentityKeys = await store.recentIdentityKeys(retentionDays);
     } catch {
       for (const state of states) {
         state.fixedResult = "history_error";

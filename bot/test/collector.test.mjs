@@ -101,6 +101,23 @@ function dependencies({ claimed, candidatesByCategory, store = fakeStore(claimed
   };
 }
 
+test("uses the configured identity retention window", async () => {
+  const claimed = [niche("tools", "MLB100")];
+  const requested = [];
+  const store = fakeStore(claimed);
+  store.recentIdentityKeys = async (days) => { requested.push(days); return new Set(); };
+
+  await collectDue(dependencies({
+    claimed,
+    candidatesByCategory: new Map([["MLB100", []]]),
+    store,
+    dryRun: true,
+    retentionDays: 13,
+  }));
+
+  assert.deepEqual(requested, [13]);
+});
+
 test("publishes ten offers across at least five niches with no more than two per niche and completes every claim", async () => {
   const claimed = [
     niche("tools", "MLB100"), niche("games", "MLB200"), niche("phones", "MLB300"),

@@ -19,6 +19,8 @@ import { runCollectorLoop } from "./collector-runtime.mjs";
 import { PublicOffersStore } from "./public-offers-store.mjs";
 import { publicSiteHandler } from "./public-site-handler.mjs";
 import { SessionAlert } from "./session-alert.mjs";
+import { composeOfferCard } from "./offer-card.mjs";
+import { createCollectorLoopOptions, parseCollectorConfig } from "./server-config.mjs";
 async function main() {
   const env = process.env;
   const dryRun = env.DRY_RUN !== "false";
@@ -33,9 +35,7 @@ async function main() {
     throw Error("configuration_required");
   const oauthEnabled = env.MELI_OAUTH_ENABLED === "true";
   const collectorEnabled = env.COLLECTOR_ENABLED === "true";
-  const collectorSendDelayMs = Number(env.COLLECTOR_SEND_DELAY_MS ?? 15000);
-  if (!Number.isInteger(collectorSendDelayMs) || collectorSendDelayMs < 1000 || collectorSendDelayMs > 60000)
-    throw Error("configuration_required");
+  const collectorConfig = parseCollectorConfig(env);
   if (oauthEnabled && (!env.MELI_CLIENT_ID || !env.MELI_CLIENT_SECRET || !env.MELI_REDIRECT_URI))
     throw Error("configuration_required");
   if (collectorEnabled && (!env.MELI_CLIENT_ID || !env.MELI_CLIENT_SECRET || !env.MELI_REDIRECT_URI))
@@ -108,8 +108,8 @@ async function main() {
   await publicOffers.init();
   const collectorStore = collectorEnabled ? new CollectorStore(pool) : null;
   if (collectorStore) await collectorStore.init();
-  const sessionAlert = collectorStore && !dryRun && env.ADMIN_WHATSAPP
-    ? new SessionAlert({ evolution: clients.evolution, destination: env.ADMIN_WHATSAPP, incidents: collectorStore })
+  const sessionAlert = collectorStore && !dryRun && collectorConfig.adminWhatsapp
+    ? new SessionAlert({ evolution: clients.evolution, destination: collectorConfig.adminWhatsapp, incidents: collectorStore })
     : null;
   const site = publicSiteHandler({ store: publicOffers, siteConfig: { whatsAppGroupUrl: env.WHATSAPP_GROUP_URL ?? "" } });
   const server = createServer(createRequestHandler({ oauth: oauthHandler, site, webhook }));
@@ -125,7 +125,21 @@ async function main() {
   if (collectorEnabled) {
     const source = new OfficialOfferSource();
     const collectorLogger = { info: data => console.log(JSON.stringify(data)), error: data => console.error(JSON.stringify(data)) };
-    collectorLoop = runCollectorLoop({ enabled: true, collect: () => collectDue({ store: collectorStore, niches, source, authorizedToken: () => authorizedToken({ oauth: oauthClient, tokens: tokenStore }), meli: clients.meli, evolution: clients.evolution, sessionAlert, dryRun, sendDelayMs: collectorSendDelayMs, logger: collectorLogger }), signal: collectorController.signal });
+    collectorLoop = runCollectorLoop(createCollectorLoopOptions({
+      config: collectorConfig,
+      signal: collectorController.signal,
+      collectDue,
+      composeOfferCard,
+      store: collectorStore,
+      niches,
+      source,
+      authorizedToken: () => authorizedToken({ oauth: oauthClient, tokens: tokenStore }),
+      meli: clients.meli,
+      evolution: clients.evolution,
+      sessionAlert,
+      dryRun,
+      logger: collectorLogger,
+    }));
   }
   const stop = () => {
     running = false;
