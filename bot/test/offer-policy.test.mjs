@@ -122,6 +122,24 @@ const prefixedContextualNonFoodTitles=[
   "Shampoo de mel 400ml",
 ];
 
+const componentNonFoodTitles=[
+  "Cafeteira Oster para café moído 220V",
+  "Moedor elétrico para café em grãos",
+  "Kit óleo motor 5W30 + filtro de óleo",
+  "Shampoo de mel + condicionador 2x400ml",
+  "Kit 6 taças para vinho tinto 450ml",
+  "Forma de silicone para chocolate ao leite",
+  "Espumador elétrico para leite integral",
+  "Bala airsoft 6mm",
+  "Óleo essencial de lavanda 10ml",
+  "Sal para piscina 10kg",
+];
+
+const componentFoodTitles=[
+  "Cafeteira elétrica com café Pilão 500g",
+  "Kit camiseta + chocolate Bis",
+];
+
 test("uses product heads and usage-target context for ambiguous food terms",()=>{
   for(const title of contextualNonFoodTitles)
     assert.equal(isFoodOrBeverage({title,categoryId:"MLB31447"}),false,title);
@@ -166,6 +184,42 @@ test("applies prefixed contextual probes through eligibility and diversification
     diversifyOffers(allowed,{limit:10}).map(offer=>offer.itemId),
     allowed.map(offer=>offer.itemId),
   );
+});
+
+test("classifies each bundle component by semantic head and sale evidence",()=>{
+  for(const title of componentNonFoodTitles)
+    assert.equal(isFoodOrBeverage({title,categoryId:"MLB31447"}),false,title);
+  for(const title of componentFoodTitles)
+    assert.equal(isFoodOrBeverage({title,categoryId:"MLB31447"}),true,title);
+});
+
+test("applies component classification through eligibility and diversification",()=>{
+  const candidate=(title,itemId,nicheId)=>({...item,title,itemId,nicheId,categoryId:"MLB31447"});
+  const allowed=componentNonFoodTitles.map((title,index)=>candidate(title,`COMPONENT${index}`,`component-${index}`));
+  const rejected=componentFoodTitles.map((title,index)=>candidate(title,`COMPONENT-FOOD${index}`,`component-food-${index}`));
+  for(const offer of allowed)
+    assert.equal(isEligibleOffer(offer,{categoryId:"MLB31447",recentIds:new Set()}),true,offer.title);
+  for(const offer of rejected)
+    assert.equal(isEligibleOffer(offer,{categoryId:"MLB31447",recentIds:new Set()}),false,offer.title);
+  assert.deepEqual(
+    diversifyOffers([...rejected,...allowed],{limit:10}).map(offer=>offer.itemId),
+    allowed.map(offer=>offer.itemId),
+  );
+});
+
+test("keeps usage-target components separate from packaged food components",()=>{
+  const cases=[
+    ["Kit 2 moedores para café moído",false],
+    ["Conjunto 4 formas para chocolate amargo",false],
+    ["Óleo de motor diesel 1L",false],
+    ["Sal para aquário 2kg",false],
+    ["Cafeteira + Café Pilão 500g",true],
+    ["Espumador + Leite integral 1L",true],
+    ["Forma de silicone + Chocolate Lacta 90g",true],
+    ["Kit shampoo + Mel puro 500g",true],
+  ];
+  for(const [title,expected] of cases)
+    assert.equal(isFoodOrBeverage({title,categoryId:"MLB31447"}),expected,title);
 });
 
 test("rejects food before selecting an otherwise valid ranked offer while allowing clothing",()=>{

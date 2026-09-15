@@ -32,15 +32,16 @@ const CONTEXTUAL_FOOD_PHRASES = [
 const AMBIGUOUS_FOOD_TITLE_SIGNALS = ["cafe", "leite", "vinho", "chocolate"];
 const POLYSEMOUS_FOOD_TITLE_SIGNALS = ["oleo", "sal", "bala", "mel"];
 const NON_FOOD_CONTEXTUAL_PHRASES = [
-  /(?:^| )oleo (?:de )?(?:motor|corporal|lubrificante|hidratante)(?: |$)/,
-  /(?:^| )sal de banho(?: |$)/,
-  /(?:^| )bala de airsoft(?: |$)/,
+  /(?:^| )oleo (?:de )?(?:motor|corporal|lubrificante|hidratante|essencial)(?: |$)/,
+  /(?:^| )sal (?:de|para) (?:banho|piscina|aquario)(?: |$)/,
+  /(?:^| )bala (?:de )?airsoft(?: |$)/,
   /(?:^| )shampoo (?:de |com )?mel(?: |$)/,
 ];
 const NON_FOOD_HEAD_SIGNALS = new Set([
   "moedor", "espremedor", "maquina", "porta", "fatiador", "adega", "espumador",
   "taca", "caneca", "jarra", "forma", "pote", "galheteiro", "cafeteira", "chaleira",
-  "panela", "acucareiro", "bebedouro", "alimentador", "capacete",
+  "panela", "acucareiro", "bebedouro", "alimentador", "capacete", "filtro",
+  "shampoo", "condicionador",
   "camiseta", "camisa", "vestido", "sapato", "tenis", "body", "blusa", "calca",
   "bermuda", "short", "saia", "casaco", "jaqueta", "moletom", "sandalia",
   "chinelo", "bolsa", "bone", "chapeu", "cinto", "gravata", "roupa",
@@ -50,13 +51,59 @@ const FOOD_HEAD_SIGNALS = new Set([
   ...AMBIGUOUS_FOOD_TITLE_SIGNALS,
   ...POLYSEMOUS_FOOD_TITLE_SIGNALS,
 ]);
-const UNIT_EVIDENCE = /(?:^| )\d+(?:g|kg|ml|l)(?: |$)/;
+const FOOD_BRAND_SIGNALS = new Set([
+  "bis", "lacta", "nestle", "garoto", "hersheys", "milka", "neugebauer",
+  "pilao", "nescau", "fini", "ferrero", "rocher",
+]);
+const PACKAGE_EVIDENCE = /(?:^| )(?:\d+x)?\d+(?:g|kg|ml|l)(?: |$)|(?:^| )(?:pacote|garrafa|caixa|lata|sache)(?:s)?(?: |$)/;
+const BUNDLE_CONTENT_SIGNALS = new Set(["com", "acompanha", "incluso", "inclusa"]);
+const EARLY_HEAD_WINDOW = 5;
 
 function normalizedWords(value) {
   return typeof value === "string"
     ? value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase()
       .replace(/\+/g, " plus ").replace(/[^a-z0-9]+/g, " ").trim()
     : "";
+}
+
+function matchesSignal(word, signals) {
+  return signals.has(word) ||
+    (word.endsWith("s") && signals.has(word.slice(0, -1))) ||
+    (word.endsWith("es") && signals.has(word.slice(0, -2)));
+}
+
+function withoutMerchandisingPrefix(words) {
+  let start = 0;
+  if (words[start] === "kit" || words[start] === "conjunto") start += 1;
+  while (words[start] === "de" || /^\d+(?:x\d+)?$/.test(words[start] ?? "")) start += 1;
+  return words.slice(start);
+}
+
+function componentIsFood(component) {
+  const words = withoutMerchandisingPrefix(component.split(/\s+/));
+  const text = words.join(" ");
+  const tokens = new Set(words);
+  const hasSignal = signal => tokens.has(signal) || tokens.has(`${signal}s`);
+  const hasFoodToken = FOOD_TITLE_SIGNALS.some(hasSignal) ||
+    AMBIGUOUS_FOOD_TITLE_SIGNALS.some(hasSignal) ||
+    POLYSEMOUS_FOOD_TITLE_SIGNALS.some(hasSignal);
+  const hasFoodPhrase = CONTEXTUAL_FOOD_PHRASES.some(pattern => pattern.test(text));
+  if (!hasFoodToken && !hasFoodPhrase) return false;
+
+  const nonFoodContext = NON_FOOD_CONTEXTUAL_PHRASES.some(pattern => pattern.test(text));
+  const earlyWords = words.slice(0, EARLY_HEAD_WINDOW);
+  const nonFoodHeadIndex = earlyWords.findIndex(word => matchesSignal(word, NON_FOOD_HEAD_SIGNALS));
+  if (nonFoodContext) return false;
+  if (nonFoodHeadIndex >= 0) {
+    const foodIndex = words.findIndex(word => matchesSignal(word, FOOD_HEAD_SIGNALS));
+    const packagedFood = PACKAGE_EVIDENCE.test(text) && foodIndex > nonFoodHeadIndex &&
+      (words.some(word => FOOD_BRAND_SIGNALS.has(word)) ||
+       words.slice(nonFoodHeadIndex + 1, foodIndex).some(word => BUNDLE_CONTENT_SIGNALS.has(word)));
+    return packagedFood;
+  }
+
+  if (hasFoodPhrase) return true;
+  return words.slice(0, EARLY_HEAD_WINDOW).some(word => matchesSignal(word, FOOD_HEAD_SIGNALS)) || hasFoodToken;
 }
 
 export function isFoodOrBeverage(offer) {
@@ -66,23 +113,7 @@ export function isFoodOrBeverage(offer) {
 
   const title = normalizedWords(offer.title);
   if (!title) return false;
-  const words = title.split(/\s+/);
-  const tokens = new Set(words);
-  const hasSignal = signal => tokens.has(signal) || tokens.has(`${signal}s`);
-  const hasFoodToken = FOOD_TITLE_SIGNALS.some(hasSignal) ||
-    AMBIGUOUS_FOOD_TITLE_SIGNALS.some(hasSignal) ||
-    POLYSEMOUS_FOOD_TITLE_SIGNALS.some(hasSignal);
-  const hasFoodPhrase = CONTEXTUAL_FOOD_PHRASES.some(pattern => pattern.test(title));
-  if (hasFoodPhrase || (tokens.has("plus") && hasFoodToken)) return true;
-  if (NON_FOOD_CONTEXTUAL_PHRASES.some(pattern => pattern.test(title))) return false;
-  const earlyWords = words.slice(0, 5);
-  const hasNonFoodHead = earlyWords.some(word =>
-    NON_FOOD_HEAD_SIGNALS.has(word) || (word.endsWith("s") && NON_FOOD_HEAD_SIGNALS.has(word.slice(0, -1))));
-  if (hasNonFoodHead && hasFoodToken) return false;
-  const hasFoodHead = earlyWords.some(word =>
-    FOOD_HEAD_SIGNALS.has(word) || (word.endsWith("s") && FOOD_HEAD_SIGNALS.has(word.slice(0, -1))));
-  if (hasFoodHead || (UNIT_EVIDENCE.test(title) && hasFoodToken)) return true;
-  return hasFoodToken;
+  return title.split(/\s+plus\s+/).some(componentIsFood);
 }
 
 export function isEligibleOffer(candidate, { categoryId, recentIds = new Set() } = {}) {
