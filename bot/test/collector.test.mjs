@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { collectDue, collectOnce } from "../collector.mjs";
+import { MeliBridgeClient } from "../clients.mjs";
 import { offerIdentities } from "../product-fingerprint.mjs";
 
 const STARTED_AT = new Date("2026-09-15T12:00:00.000Z");
@@ -609,6 +610,42 @@ test("isolates category and source failures while alerting once for repeated ses
   assert.deepEqual(store.events.filter((event) => event[0] === "complete").map((event) => event[2]), [
     "category_error", "source_error", "affiliate_error", "affiliate_error",
   ]);
+});
+
+test("collector alerts only for bridge-reported browser session expiry", async () => {
+  for (const { category, expectedAlerts, expectedSessionFailures } of [
+    { category: "unauthorized", expectedAlerts: 0, expectedSessionFailures: 0 },
+    { category: "session_expired", expectedAlerts: 1, expectedSessionFailures: 1 },
+  ]) {
+    const claimed = [niche(`bridge-${category}`, "MLB300")];
+    const store = fakeStore(claimed);
+    const logs = [];
+    let alerts = 0;
+    const meli = new MeliBridgeClient({
+      url: "http://host:3210",
+      key: "bridge-secret",
+      fetch: async () => Response.json(
+        { valid: false, category, detail: "cookie=do-not-leak" },
+        { status: 401 },
+      ),
+    });
+
+    const result = await collectDue(dependencies({
+      claimed,
+      store,
+      candidatesByCategory: new Map([["MLB300", [offer(301, "MLB300")]]]),
+      meli,
+      sessionAlert: { required: async () => { alerts++; }, restored: async () => {} },
+      logger: { info: (event) => logs.push(event), error: (event) => logs.push(event) },
+    }));
+
+    assert.equal(result.affiliateFailed, 1);
+    assert.equal(result.sessionFailed, expectedSessionFailures);
+    assert.equal(alerts, expectedAlerts);
+    assert.equal(result.published, 0);
+    assert.equal(store.events.filter((event) => event[0] === "review").length, 1);
+    assert.doesNotMatch(JSON.stringify(logs), /bridge-secret|do-not-leak|cookie=/);
+  }
 });
 
 test("successful incident restoration rearms one alert for a later independent expiry", async () => {

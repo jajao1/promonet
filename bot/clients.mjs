@@ -19,7 +19,25 @@ function validateJpegBase64(media) {
   ) throw Error("media_invalid");
 }
 
-async function jsonRequest(fetch, url, body, headers, max = 1024 * 1024) {
+const PRESERVED_REQUEST_ERRORS = new Set([
+  "session_expired",
+  "meli_bridge_unauthorized",
+  "meli_bridge_configuration",
+  "meli_bridge_remote",
+]);
+
+async function boundedJson(response, max) {
+  let size = 0;
+  const chunks = [];
+  for await (const chunk of response.body) {
+    size += chunk.length;
+    if (size > max) throw Error("size");
+    chunks.push(chunk);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+async function jsonRequest(fetch, url, body, headers, max = 1024 * 1024, classifyResponse) {
   try {
     const response = await fetch(url, {
       method: "POST",
@@ -28,21 +46,34 @@ async function jsonRequest(fetch, url, body, headers, max = 1024 * 1024) {
       headers: { "content-type": "application/json", ...headers },
       body: JSON.stringify(body),
     });
-    if ([301, 302, 303, 307, 308, 401, 403].includes(response.status))
+    if (!classifyResponse && [301, 302, 303, 307, 308, 401, 403].includes(response.status))
       throw Error("session_expired");
-    if (!response.ok) throw Error("http");
-    let size = 0;
-    const chunks = [];
-    for await (const chunk of response.body) {
-      size += chunk.length;
-      if (size > max) throw Error("size");
-      chunks.push(chunk);
+    if (classifyResponse) {
+      const data = await boundedJson(response, max);
+      const category = classifyResponse(response, data);
+      if (category) throw Error(category);
+      if (!response.ok) throw Error("http");
+      return data;
     }
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    if (!response.ok) throw Error("http");
+    return await boundedJson(response, max);
   } catch (error) {
-    if (error?.message === "session_expired") throw error;
+    if (PRESERVED_REQUEST_ERRORS.has(error?.message)) throw error;
     throw Error("remote_request_failed");
   }
+}
+
+function bridgeResponseError(response, data) {
+  const category = data?.valid === false ? data.category : null;
+  if (category === "session_expired") return "session_expired";
+  if (category === "unauthorized") return "meli_bridge_unauthorized";
+  if (["configuration", "request_invalid", "not_found"].includes(category))
+    return "meli_bridge_configuration";
+  if ([
+    "remote", "remote_request_failed", "affiliate_source_invalid",
+    "affiliate_response_invalid", "bridge_failed",
+  ].includes(category)) return "meli_bridge_remote";
+  return response.ok ? null : "meli_bridge_remote";
 }
 export class MeliClient {
   constructor({ session, tags, fetch = globalThis.fetch }) {
@@ -123,7 +154,14 @@ export class MeliBridgeClient {
   async convert(url, tag, createTag) {
     marketplaceUrl(url);
     if (createTag) throw Error("tag_creation_not_supported");
-    const data = await jsonRequest(this.fetch, `${this.url}/convert`, { url, tag }, { authorization: `Bearer ${this.key}` }, 64 * 1024);
+    const data = await jsonRequest(
+      this.fetch,
+      `${this.url}/convert`,
+      { url, tag },
+      { authorization: `Bearer ${this.key}` },
+      64 * 1024,
+      bridgeResponseError,
+    );
     if (data?.valid !== true || typeof data.affiliateUrl !== "string") throw Error("affiliate_response_invalid");
     const parsed = marketplaceUrl(data.affiliateUrl);
     if (parsed.hostname !== "meli.la") throw Error("affiliate_response_invalid");

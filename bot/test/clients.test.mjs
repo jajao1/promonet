@@ -26,6 +26,41 @@ test("bridge delegates an existing meli.la affiliate link for PowerShell resolut
   assert.equal(await bridge.convert("https://meli.la/other-affiliate", "tag", false), "https://meli.la/my-link");
   assert.deepEqual(calls.map((call) => call.method), ["POST"]);
 });
+test("bridge distinguishes its bearer authorization from browser session expiry", async () => {
+  for (const { category, expected } of [
+    { category: "unauthorized", expected: "meli_bridge_unauthorized" },
+    { category: "session_expired", expected: "session_expired" },
+  ]) {
+    const bridge = new mod.MeliBridgeClient({
+      url: "http://host:3210",
+      key: "bridge-secret",
+      fetch: async () => Response.json(
+        { valid: false, category, detail: "cookie=do-not-leak" },
+        { status: 401 },
+      ),
+    });
+    await assert.rejects(
+      () => bridge.convert("https://produto.mercadolivre.com.br/MLB-1234567890-item", "tag", false),
+      (error) => error?.message === expected && !error.message.includes("do-not-leak"),
+    );
+  }
+});
+test("bridge maps only allowlisted configuration and remote categories to fixed codes", async () => {
+  for (const { category, status, expected } of [
+    { category: "configuration", status: 500, expected: "meli_bridge_configuration" },
+    { category: "remote", status: 502, expected: "meli_bridge_remote" },
+  ]) {
+    const bridge = new mod.MeliBridgeClient({
+      url: "http://host:3210",
+      key: "bridge-secret",
+      fetch: async () => Response.json({ valid: false, category }, { status }),
+    });
+    await assert.rejects(
+      () => bridge.convert("https://produto.mercadolivre.com.br/MLB-1234567890-item", "tag", false),
+      (error) => error?.message === expected,
+    );
+  }
+});
 test("affiliate permits fragment removal but requires correct tag and query", async () => {
   for (const [origin, tag, success] of [
     ["https://www.mercadolivre.com.br/p/1?variation=2", "tech", true],
@@ -153,7 +188,7 @@ test("affiliate blocks redirects, error schemas and unknown tag schema", async (
   await assert.rejects(() => c.convert("https://meli.la/a", "t", true));
 });
 test("affiliate classifies redirects and authorization failures as expired without retry", async () => {
-  for (const status of [302, 401, 403]) {
+  for (const status of [301, 302, 401, 403]) {
     let calls = 0;
     const c = new mod.MeliClient({ session, fetch: async () => { calls++; return new Response("", { status }); } });
     await assert.rejects(() => c.convert("https://meli.la/a", "t", false), /session_expired/);
