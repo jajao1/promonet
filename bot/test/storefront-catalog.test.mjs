@@ -8,5 +8,6 @@ test("exposes the ten stable public storefront categories", () => {
     "eletrodomesticos", "beleza", "esportes", "automotivo", "bebe",
   ]);
   assert.equal(categoryBySlug("ferramentas").name, "Ferramentas");
+  assert.equal(categoryBySlug("ferramentas").nicheId, "tools");
   assert.equal(categoryBySlug("comida"), null);
 });

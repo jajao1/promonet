@@ -133,7 +133,7 @@ export function publicSiteHandler({ store, randomUUID = defaultRandomUUID, siteC
       const category = categoryBySlug(categoryMatch[1].toLowerCase());
       if (!category) { pageError(res, 404, "Categoria não encontrada", "Esta categoria não existe."); return true; }
       try {
-        const [offers, categories] = await Promise.all([store.listCategory(category.slug, { limit: 24 }), store.categories?.() ?? []]);
+        const [offers, categories] = await Promise.all([store.listCategory(category.nicheId, { limit: 24 }), store.categories?.() ?? []]);
         if (!offers.total) { pageError(res, 404, "Categoria sem ofertas", "Ainda não há ofertas recentes nesta categoria."); return true; }
         sendHtml(res, 200, renderCategoryPage({ category, offers: offers.items, total: offers.total, categories }));
       } catch { pageError(res, 503, "Site temporariamente indisponível", "Tente novamente em instantes."); }
@@ -141,11 +141,13 @@ export function publicSiteHandler({ store, randomUUID = defaultRandomUUID, siteC
     }
     const outboundMatch = url.pathname.match(/^\/ir\/([a-z0-9_-]{1,50})\/([a-z0-9_-]{1,80})$/i);
     if (outboundMatch) {
+      const category = categoryBySlug(outboundMatch[1].toLowerCase());
+      if (!category) { pageError(res, 404, "Oferta não encontrada", "Esta oferta não foi localizada."); return true; }
       try {
-        const offer = await store.findOfferPage(outboundMatch[1], outboundMatch[2]);
+        const offer = await store.findOfferPage(category.nicheId, outboundMatch[2]);
         if (!offer) { pageError(res, 404, "Oferta não encontrada", "Esta oferta não foi localizada."); return true; }
         if (offer.status !== "active" || !safeDestination(offer.affiliateUrl)) { pageError(res, 410, "Oferta indisponível", "Esta oferta não está mais disponível."); return true; }
-        await store.recordClick(outboundMatch[1], outboundMatch[2], randomUUID(), referrerHost(req.headers?.referer));
+        await store.recordClick(category.nicheId, outboundMatch[2], randomUUID(), referrerHost(req.headers?.referer));
         res.writeHead(302, { location: offer.affiliateUrl, "cache-control": "no-store", "referrer-policy": "no-referrer", "x-robots-tag": "noindex, nofollow" });
         res.end();
       } catch { send(res, 503, { error: "temporarily_unavailable" }, { "cache-control": "no-store", "x-robots-tag": "noindex, nofollow" }); }
@@ -172,11 +174,13 @@ export function publicSiteHandler({ store, randomUUID = defaultRandomUUID, siteC
       send(res, 404, { error: "not_found" }, { "cache-control": "no-store" });
       return true;
     }
+    const category = categoryBySlug(match[1].toLowerCase());
+    if (!category) { pageError(res, 404, "Oferta não encontrada", "Esta oferta não foi localizada."); return true; }
     try {
-      const offer = await store.findOfferPage(match[1], match[2]);
+      const offer = await store.findOfferPage(category.nicheId, match[2]);
       if (!offer) { pageError(res, 404, "Oferta não encontrada", "Esta oferta não foi localizada."); return true; }
       if (offer.status === "unavailable" || !safeDestination(offer.affiliateUrl)) { pageError(res, 410, "Oferta indisponível", "Esta oferta não está mais disponível."); return true; }
-      const related = await store.listRelated(match[1], match[2], 4);
+      const related = await store.listRelated(category.nicheId, match[2], 4);
       const robots = offer.status === "expired" ? "noindex,follow" : "index,follow";
       sendHtml(res, 200, renderOfferPage({ offer, related }), robots);
     } catch { pageError(res, 503, "Site temporariamente indisponível", "Tente novamente em instantes."); }

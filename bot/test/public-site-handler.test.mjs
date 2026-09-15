@@ -88,6 +88,19 @@ test("canonicalizes filtered pages to their clean landing page", async () => {
   assert.doesNotMatch(String(res.body), /canonical[^>]+\?/);
 });
 
+test("translates public category slugs to internal niche ids", async () => {
+  const calls = [];
+  const item = { status: "active", category: "ferramentas", itemId: "MLB9", title: "Furadeira", price: 199, originalPrice: 299, imageUrl: null, publishedAt: "2026-09-14T12:00:00Z", affiliateUrl: "https://meli.la/tool" };
+  const store = {
+    listCategory: async (id) => { calls.push(["category", id]); return { items: [item], total: 1 }; }, categories: async () => [{ id: "ferramentas", count: 1 }],
+    findOfferPage: async (id) => { calls.push(["offer", id]); return item; }, listRelated: async (id) => { calls.push(["related", id]); return []; },
+  };
+  const handler = publicSiteHandler({ store });
+  await handler({ method: "GET", url: "/categoria/ferramentas", headers: {} }, response());
+  await handler({ method: "GET", url: "/oferta/ferramentas/MLB9", headers: {} }, response());
+  assert.deepEqual(calls, [["category", "tools"], ["offer", "tools"], ["related", "tools"]]);
+});
+
 test("applies expired, unavailable, unknown, and empty category semantics", async () => {
   const cases = [
     [{ status: "expired", category: "games", itemId: "OLD", title: "Antigo", price: 99, originalPrice: null, imageUrl: null, publishedAt: "2026-09-01T12:00:00Z", affiliateUrl: "https://meli.la/old" }, 200, /noindex,follow/],

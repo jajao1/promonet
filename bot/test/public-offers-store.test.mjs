@@ -85,3 +85,15 @@ test("lists only active category and offer URLs for the sitemap", async () => {
   assert.match(db.calls[1].text, /JOIN promonet\.offer_previews/);
   assert.match(db.calls[1].text, /state\s*=\s*'published'/);
 });
+
+test("maps internal niche ids to stable Portuguese public slugs", async () => {
+  const db = database([
+    [{ niche_id: "tools", item_id: "MLB9", title: "Furadeira", price: "199", original_price: "299", image_url: null, published_at: "2026-09-14T12:00:00Z", total_count: "1" }],
+    [{ niche_id: "tools", latest_at: "2026-09-14T12:00:00Z" }],
+    [{ id: "tools", count: "2" }],
+  ]);
+  const store = new PublicOffersStore(db, { now: () => new Date("2026-09-14T12:00:00Z") });
+  assert.equal((await store.list()).items[0].category, "ferramentas");
+  assert.equal((await store.listSitemapCategories())[0].slug, "ferramentas");
+  assert.deepEqual(await store.categories(), [{ id: "ferramentas", count: 2 }]);
+});
