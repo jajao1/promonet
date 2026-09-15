@@ -45,6 +45,8 @@ test("storefront assets expose the complete accessible offer journey", async () 
   assert.match(js, /if \(!hasServerRenderedOffers \|\| hasInteractiveFilters\) await loadOffers\(\)/);
   assert.doesNotMatch(js, /selectCategory\(initialCategory\);\s*$/);
   assert.match(js, /href = `\/categoria\/\$\{category\.id\}`/);
+  assert.match(js, /roupas:\s*"Roupas"/);
+  assert.match(js, /"acessorios-de-moda":\s*"Acessórios de Moda"/);
   assert.match(html, /id="offer-grid"/);
   assert.match(html, /<noscript>/);
   assert.match(favicon, /<svg/);

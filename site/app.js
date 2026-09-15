@@ -9,7 +9,7 @@ const elements = {
   whatsApps: document.querySelectorAll(".whatsapp-link"), heroTotal: document.querySelector("#hero-total"),
 };
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
-const categoryNames = { tenis: "Tênis", ferramentas: "Ferramentas", celulares: "Celulares", informatica: "Informática", games: "Games", eletrodomesticos: "Eletrodomésticos", beleza: "Beleza", esportes: "Esportes", automotivo: "Automotivo", bebe: "Bebê" };
+const categoryNames = { tenis: "Tênis", roupas: "Roupas", "acessorios-de-moda": "Acessórios de Moda", ferramentas: "Ferramentas", celulares: "Celulares", informatica: "Informática", games: "Games", eletrodomesticos: "Eletrodomésticos", beleza: "Beleza", esportes: "Esportes", automotivo: "Automotivo", bebe: "Bebê" };
 
 function discount(item) {
   return Number.isFinite(item.originalPrice) && item.originalPrice > item.price

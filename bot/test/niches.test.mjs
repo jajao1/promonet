@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { FORBIDDEN_CATEGORY_IDS } from "../category-policy.mjs";
 import { validateNiches } from "../niches.mjs";
 
 const vertical = {
@@ -67,7 +68,7 @@ test("accepts shared destinations and a five-minute minimum interval", () => {
 });
 
 test("rejects roots, food, duplicates, empty lists, and multi-item verticals", () => {
-  for (const categoryIds of [[], ["MLB1000"], ["MLB1430"], ["MLB1403"], ["MLB262997", "MLB262997"]]) {
+  for (const categoryIds of [[], ...FORBIDDEN_CATEGORY_IDS.map(categoryId=>[categoryId]), ["MLB262997", "MLB262997"]]) {
     assert.throws(() => validateNiches({ niches: [{ ...vertical, categoryIds }] }), /invalid_niche/);
   }
   assert.throws(() => validateNiches({ niches: [{ ...vertical, limit: 2 }] }), /invalid_niche/);

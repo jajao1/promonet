@@ -1,27 +1,17 @@
-const FOOD_CATEGORY_IDS = new Set([
-  "MLB1403",
-  "MLB278123",
-  "MLB410883",
-  "MLB455292",
-  "MLB439739",
-  "MLB455505",
-  "MLB1423",
-  "MLB1417",
-  "MLB269718",
-  "MLB455580",
-  "MLB194832",
-]);
+import { isFoodCategoryId } from "./category-policy.mjs";
 
 const FOOD_TITLE_SIGNALS = [
   "macarrao", "acucar", "refrigerante", "arroz", "bebida", "alimento",
   "feijao", "cerveja", "suco", "cha", "pao",
   "biscoito", "bolacha", "carne", "frango", "farinha", "azeite", "molho",
   "cereal", "salgadinho", "queijo", "mussarela", "manteiga", "margarina",
-  "iogurte", "presunto", "mortadela", "salame", "bacon", "ovos",
+  "iogurte", "presunto", "mortadela", "salame", "bacon", "ovos", "achocolatado",
+  "bombom", "bombons", "racao",
 ];
 
 const CONTEXTUAL_FOOD_PHRASES = [
   /(?:^| )agua (?:mineral|com gas)(?: |$)/,
+  /(?:^| )agua de coco(?: |$)/,
   /(?:^| )hamburguer(?:es)?(?: |$)/,
   /(?:^| )cafe (?:torrado|moido|em graos|soluvel|em capsulas?)(?: |$)/,
   /(?:^| )leite (?:integral|desnatado|semidesnatado|em po|condensado|zero lactose)(?: |$)/,
@@ -29,8 +19,8 @@ const CONTEXTUAL_FOOD_PHRASES = [
   /(?:^| )(?:garrafa|caixa|kit) (?:de )?vinho(?: |$)/,
   /(?:^| )chocolate (?:ao leite|amargo|meio amargo|branco|em po|\d+g)(?: |$)/,
   /(?:^| )(?:barra|caixa|bombom|ovo) (?:de )?chocolate(?: |$)/,
-  /(?:^| )chocolate (?:[^ ]+ )*(?:lacta|nestle|garoto|hersheys|milka|neugebauer)(?: |$)/,
-  /(?:^| )(?:lacta|nestle|garoto|hersheys|milka|neugebauer)(?: [^ ]+)* chocolate(?: |$)/,
+  /(?:^| )chocolate (?:[^ ]+ )*(?:bis|lacta|nestle|garoto|hersheys|milka|neugebauer)(?: |$)/,
+  /(?:^| )(?:bis|lacta|nestle|garoto|hersheys|milka|neugebauer)(?: [^ ]+)* chocolate(?: |$)/,
   /(?:^| )chocolate(?: |$).* \d+(?:g|kg)(?: |$)/,
 ];
 
@@ -41,6 +31,15 @@ const FASHION_TITLE_SIGNALS = new Set([
   "chinelo", "bolsa", "bone", "chapeu", "cinto", "gravata", "roupa",
 ]);
 
+const NON_FOOD_PRODUCT_PATTERNS = [
+  /(?:^| )moedor(?: eletrico)? de carne(?: |$)/,
+  /(?:^| )espremedor(?: eletrico| industrial)? de suco(?: |$)/,
+  /(?:^| )maquina(?: eletrica)? de pao(?: |$)/,
+  /(?:^| )porta ovos(?: |$)/,
+  /(?:^| )fatiador(?: eletrico)? de queijo(?: |$)/,
+  /(?:^| )adega porta vinho(?: |$)/,
+];
+
 function normalizedWords(value) {
   return typeof value === "string"
     ? value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
@@ -49,13 +48,15 @@ function normalizedWords(value) {
 
 export function isFoodOrBeverage(offer) {
   if (!offer || typeof offer !== "object") return false;
-  if (FOOD_CATEGORY_IDS.has(offer.categoryId) || FOOD_CATEGORY_IDS.has(offer.scopeCategoryId)) return true;
+  if (isFoodCategoryId(offer.categoryId) || isFoodCategoryId(offer.scopeCategoryId) ||
+      isFoodCategoryId(offer.requestedCategoryId)) return true;
 
   let title = normalizedWords(offer.title);
   if (!title) return false;
   title = title
     .replace(/(?:^| )cafe racer(?: |$)/g, " ")
     .replace(/(?:^| )panela(?: eletrica)? (?:de|para) arroz(?: |$)/g, " ");
+  for (const pattern of NON_FOOD_PRODUCT_PATTERNS) title = title.replace(pattern, " ");
   const tokens = new Set(title.trim().split(/\s+/).filter(Boolean));
   if (FOOD_TITLE_SIGNALS.some(signal => tokens.has(signal)) ||
       CONTEXTUAL_FOOD_PHRASES.some(pattern => pattern.test(title))) return true;
@@ -65,12 +66,14 @@ export function isFoodOrBeverage(offer) {
   return true;
 }
 
-function valid(candidate, categoryId, recentIds) {
+export function isEligibleOffer(candidate, { categoryId, recentIds = new Set() } = {}) {
   try {
     const product = new URL(candidate.permalink);
     const image = new URL(candidate.imageUrl);
-    return candidate.status === "active" &&
-      (candidate.scopeCategoryId ?? candidate.categoryId) === categoryId &&
+    const requestedCategoryId = candidate.requestedCategoryId ?? candidate.scopeCategoryId ?? candidate.categoryId;
+    return typeof categoryId === "string" && /^MLB\d+$/.test(categoryId) &&
+      candidate.status === "active" &&
+      requestedCategoryId === categoryId &&
       !recentIds.has(candidate.itemId) &&
       !isFoodOrBeverage(candidate) &&
       typeof candidate.title === "string" && candidate.title.trim() &&
@@ -91,8 +94,8 @@ const discount = candidate => Number.isFinite(candidate.originalPrice) && candid
 export function selectOffers(candidates, { categoryId, recentIds, limit }) {
   const seen = new Set();
   return candidates
-    .filter(candidate => valid(candidate, categoryId, recentIds) && !seen.has(candidate.itemId) && seen.add(candidate.itemId))
-    .sort((a, b) => a.rank - b.rank || discount(b) - discount(a) || a.itemId.localeCompare(b.itemId))
+    .filter(candidate => isEligibleOffer(candidate, { categoryId, recentIds }) && !seen.has(candidate.itemId) && seen.add(candidate.itemId))
+    .sort(compareOffers)
     .slice(0, limit);
 }
 
@@ -102,11 +105,15 @@ export function selectOffer(candidates, options) {
 
 function boundedQuota(value, fallback, maximum) {
   if (value === undefined) return fallback;
-  if (!Number.isInteger(value)) return null;
-  return Math.min(maximum, Math.max(1, value));
+  if (!Number.isInteger(value) || value <= 0) return null;
+  return Math.min(maximum, value);
 }
 
-export function diversifyOffers(candidates, { limit = 10, perNiche = 2 } = {}) {
+export function compareOffers(a, b) {
+  return a.rank - b.rank || discount(b) - discount(a) || a.itemId.localeCompare(b.itemId);
+}
+
+export function diversifyOffers(candidates, { limit = 10, perNiche = 2, recentIds = new Set() } = {}) {
   const effectiveLimit = boundedQuota(limit, 10, 10);
   const effectivePerNiche = boundedQuota(perNiche, 2, 2);
   if (!Array.isArray(candidates) || effectiveLimit === null || effectivePerNiche === null) return [];
@@ -116,9 +123,19 @@ export function diversifyOffers(candidates, { limit = 10, perNiche = 2 } = {}) {
     if (!candidate || typeof candidate.nicheId !== "string" ||
         !/^[a-z0-9_-]+$/.test(candidate.nicheId) ||
         typeof candidate.itemId !== "string" || !candidate.itemId) continue;
-    if (!groups.has(candidate.nicheId)) groups.set(candidate.nicheId, []);
-    groups.get(candidate.nicheId).push(candidate);
+    const categoryId = candidate.requestedCategoryId ?? candidate.scopeCategoryId ?? candidate.categoryId;
+    if (!isEligibleOffer(candidate, { categoryId, recentIds })) continue;
+    const candidateCap = candidate.maxPerRound === undefined
+      ? effectivePerNiche
+      : boundedQuota(candidate.maxPerRound, effectivePerNiche, 2);
+    if (candidateCap === null) continue;
+    if (!groups.has(candidate.nicheId)) groups.set(candidate.nicheId, { offers: [], cap: effectivePerNiche });
+    const group = groups.get(candidate.nicheId);
+    group.offers.push(candidate);
+    group.cap = Math.min(group.cap, candidateCap);
   }
+
+  for (const group of groups.values()) group.offers.sort(compareOffers);
 
   const cursors = new Map([...groups.keys()].map(nicheId => [nicheId, 0]));
   const selected = [];
@@ -127,8 +144,9 @@ export function diversifyOffers(candidates, { limit = 10, perNiche = 2 } = {}) {
   let progressed = true;
   while (selected.length < effectiveLimit && progressed) {
     progressed = false;
-    for (const [nicheId, offers] of groups) {
-      if (selected.length >= effectiveLimit || (counts.get(nicheId) ?? 0) >= effectivePerNiche) continue;
+    for (const [nicheId, group] of groups) {
+      if (selected.length >= effectiveLimit || (counts.get(nicheId) ?? 0) >= group.cap) continue;
+      const offers = group.offers;
       let cursor = cursors.get(nicheId);
       while (cursor < offers.length && selectedIds.has(offers[cursor].itemId)) cursor += 1;
       cursors.set(nicheId, cursor + 1);

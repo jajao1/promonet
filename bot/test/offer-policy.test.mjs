@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { diversifyOffers, formatOffer, isFoodOrBeverage, selectOffer, selectOffers } from "../offer-policy.mjs";
+import { diversifyOffers, formatOffer, isEligibleOffer, isFoodOrBeverage, selectOffer, selectOffers } from "../offer-policy.mjs";
 const item={itemId:"MLB1",rank:1,title:"Console",status:"active",permalink:"https://produto.mercadolivre.com.br/MLB-1-console",imageUrl:"https://http2.mlstatic.com/a.jpg",price:100,originalPrice:150,categoryId:"MLB1144"};
 test("selects a valid unseen candidate and prioritizes confirmed discount",()=>{const selected=selectOffer([{...item,itemId:"MLB2",rank:0,originalPrice:null},{...item,rank:5}],{categoryId:"MLB1144",recentIds:new Set()});assert.equal(selected.itemId,"MLB1");});
 test("accepts a child-category offer returned by the requested official category scope",()=>{const selected=selectOffer([{...item,categoryId:"MLB186456",scopeCategoryId:"MLB1144"}],{categoryId:"MLB1144",recentIds:new Set()});assert.equal(selected?.itemId,"MLB1");});
@@ -71,6 +71,24 @@ test("allows ambiguous food words used only as fashion colors",()=>{
   ]) assert.equal(isFoodOrBeverage({title,categoryId:"MLB31447"}),false,title);
 });
 
+test("distinguishes food products from appliances and accessories across niches",()=>{
+  for(const offer of [
+    {title:"Moedor de carne elétrico",categoryId:"MLB4337"},
+    {title:"Espremedor de suco industrial",categoryId:"MLB4337"},
+    {title:"Máquina de pão automática",categoryId:"MLB4337"},
+    {title:"Porta ovos para geladeira",categoryId:"MLB1576"},
+    {title:"Fatiador de queijo em inox",categoryId:"MLB189008"},
+    {title:"Adega porta vinho 12 garrafas",categoryId:"MLB1576"},
+  ]) assert.equal(isFoodOrBeverage(offer),false,offer.title);
+  for(const offer of [
+    {title:"Achocolatado Nescau 370g",categoryId:"MLB31447"},
+    {title:"Água de coco integral 1L",categoryId:"MLB31447"},
+    {title:"Bombons Ferrero Rocher 8 unidades",categoryId:"MLB31447"},
+    {title:"Ração premium para cães 10kg",categoryId:"MLB31447"},
+    {title:"Kit camiseta + chocolate Bis",categoryId:"MLB31447"},
+  ]) assert.equal(isFoodOrBeverage(offer),true,offer.title);
+});
+
 test("rejects food before selecting an otherwise valid ranked offer while allowing clothing",()=>{
   const clothing={...item,itemId:"MLB2",title:"Camiseta masculina de algodão",categoryId:"MLB31447"};
   const food={...item,itemId:"MLB3",rank:0,title:"Macarrão espaguete 500g",categoryId:"MLB31447"};
@@ -107,6 +125,41 @@ test("handles sparse niches, invalid niche IDs, and duplicate item IDs determini
   assert.deepEqual(diversifyOffers(candidates).map(offer=>offer.itemId),expected);
 });
 
+test("filters ineligible candidates itself using candidate scope and recent ids",()=>{
+  const safe=ranked("tools","SAFE");
+  const candidates=[
+    safe,
+    {...ranked("tools","FOOD"),title:"Macarrão espaguete 500g"},
+    {...ranked("tools","INACTIVE"),status:"paused"},
+    {...ranked("tools","UNSAFE"),permalink:"https://evil.example/MLB-1"},
+    {...ranked("tools","NO-DISCOUNT"),originalPrice:100},
+    {...ranked("tools","NO-CATEGORY"),categoryId:undefined},
+    ranked("tools","RECENT"),
+  ];
+  const recentIds=new Set(["RECENT"]);
+  assert.equal(isEligibleOffer(candidates[1],{categoryId:"MLB1144",recentIds}),false);
+  assert.deepEqual(diversifyOffers(candidates,{recentIds}).map(offer=>offer.itemId),["SAFE"]);
+});
+
+test("sorts each niche by rank, discount, and item id before round robin",()=>{
+  const candidates=[
+    {...ranked("tools","T9"),rank:9,price:40,originalPrice:100},
+    {...ranked("tools","T1"),rank:1,price:90,originalPrice:100},
+    {...ranked("clothing","C5"),rank:5},
+  ];
+  assert.deepEqual(diversifyOffers(candidates).map(offer=>offer.itemId),["T1","C5","T9"]);
+});
+
+test("honors a niche maxPerRound cap carried by its candidates",()=>{
+  const candidates=[
+    {...ranked("tools","T1"),maxPerRound:1},
+    {...ranked("tools","T2"),maxPerRound:1},
+    {...ranked("clothing","C1"),maxPerRound:2},
+    {...ranked("clothing","C2"),maxPerRound:2},
+  ];
+  assert.deepEqual(diversifyOffers(candidates,{limit:10,perNiche:2}).map(offer=>offer.itemId),["T1","C1","C2"]);
+});
+
 test("enforces hard global and per-niche maxima even when callers request larger quotas",()=>{
   const candidates=["tools","clothing","sneakers","phones","games","appliances"]
     .flatMap(nicheId=>[1,2,3].map(index=>ranked(nicheId,`${nicheId}-${index}`)));
@@ -116,10 +169,12 @@ test("enforces hard global and per-niche maxima even when callers request larger
   assert.ok([...counts.values()].every(count=>count<=2));
 });
 
-test("clamps non-positive integer quotas and rejects other invalid quota types deterministically",()=>{
+test("rejects non-positive and otherwise invalid quotas deterministically",()=>{
   const candidates=[ranked("tools","T1"),ranked("tools","T2"),ranked("clothing","C1")];
-  assert.deepEqual(diversifyOffers(candidates,{limit:-5,perNiche:0}).map(offer=>offer.itemId),["T1"]);
   for(const options of [
+    {limit:0,perNiche:1},
+    {limit:1,perNiche:0},
+    {limit:-5,perNiche:1},
     {limit:1.5,perNiche:1},
     {limit:2,perNiche:1.5},
     {limit:NaN,perNiche:1},

@@ -1,5 +1,7 @@
 const definitions = [
   ["tenis", "sneakers", "Tênis", "Ofertas recentes de tênis masculinos, femininos e infantis."],
+  ["roupas", "clothing", "Roupas", "Ofertas de roupas masculinas, femininas e infantis."],
+  ["acessorios-de-moda", "fashion-accessories", "Acessórios de Moda", "Promoções de acessórios de moda para diferentes estilos."],
   ["ferramentas", "tools", "Ferramentas", "Promoções de ferramentas elétricas, manuais e acessórios."],
   ["celulares", "phones", "Celulares", "Ofertas de smartphones, acessórios e dispositivos móveis."],
   ["informatica", "computing", "Informática", "Promoções de computadores, periféricos e acessórios."],

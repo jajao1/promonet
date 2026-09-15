@@ -101,6 +101,55 @@ test("translates public category slugs to internal niche ids", async () => {
   assert.deepEqual(calls, [["category", "tools"], ["offer", "tools"], ["related", "tools"]]);
 });
 
+test("keeps clothing and fashion accessory category, offer, outbound, and sitemap routes live", async () => {
+  const definitions = [
+    { slug: "roupas", nicheId: "clothing", itemId: "MLB10", title: "Camiseta" },
+    { slug: "acessorios-de-moda", nicheId: "fashion-accessories", itemId: "MLB20", title: "Cinto" },
+  ];
+  const byItem = new Map(definitions.map(definition => [definition.itemId, definition]));
+  const calls = [];
+  const store = {
+    categories: async () => definitions.map(({ slug }) => ({ id: slug, count: 1 })),
+    listCategory: async (nicheId) => {
+      calls.push(["category", nicheId]);
+      const definition = definitions.find(value => value.nicheId === nicheId);
+      return { items: [{ ...definition, category: definition.slug, status: "active", price: 80, originalPrice: 100, publishedAt: "2026-09-15T12:00:00Z" }], total: 1 };
+    },
+    findOfferPage: async (nicheId, itemId) => {
+      calls.push(["offer", nicheId, itemId]);
+      const definition = byItem.get(itemId);
+      return definition && definition.nicheId === nicheId
+        ? { ...definition, category: definition.slug, status: "active", price: 80, originalPrice: 100, publishedAt: "2026-09-15T12:00:00Z", affiliateUrl: "https://meli.la/fashion" }
+        : null;
+    },
+    listRelated: async () => [],
+    recordClick: async (nicheId, itemId) => calls.push(["click", nicheId, itemId]),
+    listSitemapCategories: async () => definitions.map(({ slug }) => ({ slug, lastModified: "2026-09-15T12:00:00Z" })),
+    listSitemapOffers: async () => definitions.map(({ slug, itemId }) => ({ category: slug, itemId, lastModified: "2026-09-15T12:00:00Z" })),
+  };
+  const handler = publicSiteHandler({ store, randomUUID: () => "request-id" });
+  for (const definition of definitions) {
+    const category = response();
+    await handler({ method: "GET", url: `/categoria/${definition.slug}`, headers: {} }, category);
+    assert.equal(category.status, 200);
+    assert.match(String(category.body), new RegExp(`/oferta/${definition.slug}/${definition.itemId}`));
+    const offer = response();
+    await handler({ method: "GET", url: `/oferta/${definition.slug}/${definition.itemId}`, headers: {} }, offer);
+    assert.equal(offer.status, 200);
+    assert.match(String(offer.body), new RegExp(`/ir/${definition.slug}/${definition.itemId}`));
+    const outbound = response();
+    await handler({ method: "GET", url: `/ir/${definition.slug}/${definition.itemId}`, headers: {} }, outbound);
+    assert.equal(outbound.status, 302);
+  }
+  const sitemap = response();
+  await handler({ method: "GET", url: "/sitemap.xml", headers: {} }, sitemap);
+  for (const definition of definitions) {
+    assert.match(sitemap.body, new RegExp(`/categoria/${definition.slug}`));
+    assert.match(sitemap.body, new RegExp(`/oferta/${definition.slug}/${definition.itemId}`));
+    assert.ok(calls.some(call => call[1] === definition.nicheId));
+  }
+});
+
 test("applies expired, unavailable, unknown, and empty category semantics", async () => {
   const cases = [
     [{ status: "expired", category: "games", itemId: "OLD", title: "Antigo", price: 99, originalPrice: null, imageUrl: null, publishedAt: "2026-09-01T12:00:00Z", affiliateUrl: "https://meli.la/old" }, 200, /noindex,follow/],

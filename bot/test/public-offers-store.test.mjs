@@ -88,12 +88,20 @@ test("lists only active category and offer URLs for the sitemap", async () => {
 
 test("maps internal niche ids to stable Portuguese public slugs", async () => {
   const db = database([
-    [{ niche_id: "tools", item_id: "MLB9", title: "Furadeira", price: "199", original_price: "299", image_url: null, published_at: "2026-09-14T12:00:00Z", total_count: "1" }],
-    [{ niche_id: "tools", latest_at: "2026-09-14T12:00:00Z" }],
-    [{ id: "tools", count: "2" }],
+    [{ niche_id: "clothing", item_id: "MLB9", title: "Camiseta", price: "199", original_price: "299", image_url: null, published_at: "2026-09-14T12:00:00Z", total_count: "1" }],
+    [{ niche_id: "fashion-accessories", latest_at: "2026-09-14T12:00:00Z" }],
+    [{ id: "fashion-accessories", count: "2" }],
   ]);
   const store = new PublicOffersStore(db, { now: () => new Date("2026-09-14T12:00:00Z") });
-  assert.equal((await store.list()).items[0].category, "ferramentas");
-  assert.equal((await store.listSitemapCategories())[0].slug, "ferramentas");
-  assert.deepEqual(await store.categories(), [{ id: "ferramentas", count: 2 }]);
+  const [offer] = (await store.list()).items;
+  assert.equal(offer.category, "roupas");
+  assert.equal(offer.redirectUrl, "/oferta/roupas/MLB9");
+  assert.equal((await store.listSitemapCategories())[0].slug, "acessorios-de-moda");
+  assert.deepEqual(await store.categories(), [{ id: "acessorios-de-moda", count: 2 }]);
+});
+
+test("translates a public fashion slug before filtering database niches", async () => {
+  const db = database([[]]);
+  await new PublicOffersStore(db).list({ category: "roupas" });
+  assert.equal(db.calls[0].values[1], "clothing");
 });

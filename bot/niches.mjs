@@ -1,9 +1,8 @@
+import { FORBIDDEN_CATEGORY_IDS } from "./category-policy.mjs";
+
 export function validateNiches(config) {
   if (!Array.isArray(config?.niches) || !config.niches.length) throw Error("invalid_niches");
-  const forbiddenCategories = new Set([
-    "MLB1000", "MLB1144", "MLB1574", "MLB1430", "MLB1246",
-    "MLB264586", "MLB1276", "MLB263532", "MLB5672", "MLB1384", "MLB1403",
-  ]);
+  const forbiddenCategories = new Set(FORBIDDEN_CATEGORY_IDS);
   const ids=new Set(), categories=new Set();
   return Object.freeze(config.niches.map((n)=>{
     const categoryIds=n.categoryIds;

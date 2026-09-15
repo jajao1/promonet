@@ -1,4 +1,4 @@
-import { categoryByNicheId } from "./storefront-catalog.mjs";
+import { categoryByNicheId, categoryBySlug } from "./storefront-catalog.mjs";
 
 const number = (value) => value == null ? null : Number(value);
 const publicSlug = (nicheId) => categoryByNicheId(nicheId)?.slug ?? nicheId;
@@ -27,6 +27,7 @@ export class PublicOffersStore {
     const safeLimit = Math.min(48, Math.max(1, Number(limit) || 24));
     const safePage = Math.max(1, Number(page) || 1);
     const search = query ? `%${query}%` : "";
+    const nicheId = categoryBySlug(category)?.nicheId ?? category;
     const order = sort === "discount"
       ? `(CASE WHEN p.original_price > p.price THEN (p.original_price-p.price)/p.original_price ELSE 0 END) DESC, pub.published_at DESC`
       : "pub.published_at DESC";
@@ -44,7 +45,7 @@ export class PublicOffersStore {
       AND ($1 = '' OR p.title ILIKE $1)
       AND ($2 = '' OR p.niche_id = $2)
     ORDER BY ${order}
-    LIMIT $4 OFFSET $5`, [search, category, this.activeSince(), safeLimit, (safePage - 1) * safeLimit]);
+    LIMIT $4 OFFSET $5`, [search, nicheId, this.activeSince(), safeLimit, (safePage - 1) * safeLimit]);
     return {
       items: result.rows.map((row) => this.mapOffer(row)),
       total: Number(result.rows[0]?.total_count ?? 0),
@@ -87,11 +88,12 @@ export class PublicOffersStore {
   }
 
   mapOffer(row) {
+    const category = publicSlug(row.niche_id);
     return {
-      category: publicSlug(row.niche_id), itemId: row.item_id, title: row.title,
+      category, itemId: row.item_id, title: row.title,
       price: number(row.price), originalPrice: number(row.original_price), imageUrl: row.image_url,
       publishedAt: row.published_at,
-      redirectUrl: `/oferta/${encodeURIComponent(row.niche_id)}/${encodeURIComponent(row.item_id)}`,
+      redirectUrl: `/oferta/${encodeURIComponent(category)}/${encodeURIComponent(row.item_id)}`,
     };
   }
 
