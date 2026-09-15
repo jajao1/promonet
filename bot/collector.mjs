@@ -14,7 +14,6 @@ export async function collectDue({store,niches,source,authorizedToken,meli,evolu
   if(!due.length)return summary;
   const token=await authorizedToken();
   const recentIds=await store.recentItemIds();
-  let sessionAlerted=false;
   for(const niche of due.slice(0,10)){
     let categoryId;
     const finish=async result=>{await store.completeRun(niche.id,result);logger.info({event:"collector_vertical",vertical:niche.id,categoryId,result});};
@@ -28,10 +27,10 @@ export async function collectDue({store,niches,source,authorizedToken,meli,evolu
       let affiliateUrl;
       try{
         affiliateUrl=await meli.convert(offer.permalink,niche.tag,false);
-        sessionAlert?.restored();
+        await sessionAlert?.restored();
       }catch(error){
         await store.markReview(niche.id,offer.itemId);summary.review++;
-        if(["session_expired","meli_session_missing"].includes(error?.message)&&!sessionAlerted){sessionAlerted=true;try{await sessionAlert?.required();}catch{}}
+        if(["session_expired","meli_session_missing"].includes(error?.message)){try{await sessionAlert?.required();}catch{}}
         await finish("affiliate_error");continue;
       }
       try{await evolution.send({destination:niche.destinationGroup,text:formatOffer(offer,affiliateUrl),kind:"image",mimetype:"image/jpeg"},offer.imageUrl);}
@@ -59,7 +58,7 @@ export async function collectOnce({store,niches,source,authorizedToken,meli,evol
     await store.savePreview(niche.id,selected,dryRun?"simulated":"selected");
     if(dryRun){await store.completeRun(niche.id,"simulated");return "simulated";}
     const affiliateUrl=await meli.convert(selected.permalink,niche.tag,false);
-    sessionAlert?.restored();
+    await sessionAlert?.restored();
     const text=formatOffer(selected,affiliateUrl);
     try{await evolution.send({destination:niche.destinationGroup,text,kind:"image",mimetype:"image/jpeg"},selected.imageUrl);}catch{await store.markReview(niche.id,selected.itemId);await store.completeRun(niche.id,"review");return "review";}
     await store.markPublished(niche.id,selected.itemId,affiliateUrl);await store.completeRun(niche.id,"published");return "published";

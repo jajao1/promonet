@@ -106,8 +106,10 @@ async function main() {
     : null;
   const publicOffers = new PublicOffersStore(pool);
   await publicOffers.init();
-  const sessionAlert = !dryRun && env.ADMIN_WHATSAPP
-    ? new SessionAlert({ evolution: clients.evolution, destination: env.ADMIN_WHATSAPP })
+  const collectorStore = collectorEnabled ? new CollectorStore(pool) : null;
+  if (collectorStore) await collectorStore.init();
+  const sessionAlert = collectorStore && !dryRun && env.ADMIN_WHATSAPP
+    ? new SessionAlert({ evolution: clients.evolution, destination: env.ADMIN_WHATSAPP, incidents: collectorStore })
     : null;
   const site = publicSiteHandler({ store: publicOffers, siteConfig: { whatsAppGroupUrl: env.WHATSAPP_GROUP_URL ?? "" } });
   const server = createServer(createRequestHandler({ oauth: oauthHandler, site, webhook }));
@@ -121,8 +123,6 @@ async function main() {
   const collectorController = new AbortController();
   let collectorLoop = Promise.resolve();
   if (collectorEnabled) {
-    const collectorStore = new CollectorStore(pool);
-    await collectorStore.init();
     const source = new OfficialOfferSource();
     const collectorLogger = { info: data => console.log(JSON.stringify(data)), error: data => console.error(JSON.stringify(data)) };
     collectorLoop = runCollectorLoop({ enabled: true, collect: () => collectDue({ store: collectorStore, niches, source, authorizedToken: () => authorizedToken({ oauth: oauthClient, tokens: tokenStore }), meli: clients.meli, evolution: clients.evolution, sessionAlert, dryRun, sendDelayMs: collectorSendDelayMs, logger: collectorLogger }), signal: collectorController.signal });
