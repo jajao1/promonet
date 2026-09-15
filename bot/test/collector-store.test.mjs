@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash, randomUUID } from "node:crypto";
+import pg from "pg";
 import { CollectorStore } from "../collector-store.mjs";
 
 const RESERVATION_A = "11111111-1111-4111-8111-111111111111";
@@ -8,6 +10,8 @@ const ROUND_ID = "33333333-3333-4333-8333-333333333333";
 const ITEM_1 = "item:MLB1";
 const ITEM_2 = "item:MLB2";
 const PRODUCT = `product:${"a".repeat(64)}`;
+const COLLISION_URL_A = `url:${"ef72".padStart(64, "0")}`;
+const COLLISION_URL_B = `url:${"14899".padStart(64, "0")}`;
 
 function deferred() {
   let resolve;
@@ -23,10 +27,27 @@ class BehavioralDatabase {
     this.calls = [];
     this.locks = new Map();
     this.failNextReservationInsert = false;
+    this.failRollback = false;
+    this.releases = [];
+    this.now = new Date();
+    this.nextLockDelay = null;
   }
 
   async connect() {
     return new BehavioralClient(this);
+  }
+
+  delayNextLock() {
+    const entered = deferred();
+    const released = deferred();
+    this.nextLockDelay = { entered, released };
+    return {
+      entered: entered.promise,
+      release: (time) => {
+        this.now = new Date(time);
+        released.resolve();
+      },
+    };
   }
 
   async query(sql, args = []) {
@@ -83,6 +104,12 @@ class BehavioralDatabase {
   }
 
   async acquire(key, client) {
+    if (this.nextLockDelay) {
+      const delay = this.nextLockDelay;
+      this.nextLockDelay = null;
+      delay.entered.resolve();
+      await delay.released.promise;
+    }
     while (this.locks.has(key) && this.locks.get(key).client !== client) {
       await this.locks.get(key).released.promise;
     }
@@ -128,17 +155,24 @@ class BehavioralClient {
       return { rows: [] };
     }
     if (sql === "ROLLBACK") {
+      if (this.db.failRollback) throw Error("simulated_rollback_failure");
       this.pending.clear();
       this.inTransaction = false;
       this.db.release(this);
       return { rows: [] };
     }
     if (/pg_advisory_xact_lock/i.test(sql)) {
-      await this.db.acquire(args[0], this);
+      await this.db.acquire(args.join(":"), this);
+      return { rows: [] };
+    }
+    if (/clock_timestamp\(\)[\s\S]*reservation_now/i.test(sql)) {
+      return { rows: [{ reservation_now: this.db.now }] };
+    }
+    if (/set_config\('lock_timeout'/i.test(sql)) {
       return { rows: [] };
     }
     if (/DELETE FROM promonet\.offer_identity_keys/i.test(sql)) {
-      const now = Date.now();
+      const now = new Date(args[1] ?? this.db.now).getTime();
       for (const key of args[0]) {
         const row = this.view(key);
         if (row && !row.published_at && new Date(row.reserved_until).getTime() <= now) {
@@ -148,8 +182,8 @@ class BehavioralClient {
       return { rows: [] };
     }
     if (/SELECT identity_key[\s\S]*FROM promonet\.offer_identity_keys/i.test(sql)) {
-      const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1_000;
-      const now = Date.now();
+      const now = new Date(args[1] ?? this.db.now).getTime();
+      const cutoff = now - 7 * 24 * 60 * 60 * 1_000;
       const rows = args[0]
         .map((key) => this.view(key))
         .filter((row) => row && (
@@ -164,11 +198,12 @@ class BehavioralClient {
         this.db.failNextReservationInsert = false;
         throw Error("simulated_insert_failure");
       }
+      const reservationNow = new Date(args[4] ?? this.db.now).getTime();
       for (const key of args[0]) {
         this.pending.set(key, {
           identity_key: key,
           reservation_id: args[1],
-          reserved_until: new Date(Date.now() + 10 * 60 * 1_000),
+          reserved_until: new Date(reservationNow + 10 * 60 * 1_000),
           published_at: null,
           niche_id: args[2],
           item_id: args[3],
@@ -179,7 +214,14 @@ class BehavioralClient {
     return { rows: [] };
   }
 
-  release() {
+  release(force = false) {
+    this.db.releases.push(force);
+    if (force) {
+      this.pending.clear();
+      this.inTransaction = false;
+      this.db.release(this);
+      return;
+    }
     assert.equal(this.inTransaction, false, "client released with an open transaction");
   }
 }
@@ -202,6 +244,8 @@ test("creates durable collector schema and saves previews without secrets", asyn
   assert.match(schema, /offer_previews/);
   assert.match(schema, /offer_publications/);
   assert.match(schema, /offer_identity_keys[\s\S]*identity_key TEXT PRIMARY KEY/i);
+  assert.doesNotMatch(schema, /\{1,256\}/);
+  assert.match(schema, /length\(split_part\(identity_key,':',2\)\) BETWEEN 1 AND 256/i);
   assert.match(schema, /reserved_until TIMESTAMPTZ/i);
   assert.match(schema, /collector_rounds[\s\S]*metrics JSONB NOT NULL/i);
   assert.match(schema, /collector_incidents[\s\S]*active BOOLEAN NOT NULL DEFAULT false/i);
@@ -254,6 +298,106 @@ test("only one of two concurrent overlapping reservations wins", async () => {
   assert.equal(db.identities.size, 2);
 });
 
+test("sets a bounded lock wait then uses one post-lock clock value for the whole lease decision", async () => {
+  const db = new BehavioralDatabase();
+  db.now = new Date("2026-09-15T12:00:00.000Z");
+  const delayed = db.delayNextLock();
+  const pending = new CollectorStore(db).reserveOffer([ITEM_1], {
+    nicheId: "games", itemId: "MLB1", reservationId: RESERVATION_A,
+  });
+  await delayed.entered;
+  const freshNow = new Date("2026-09-15T12:00:04.000Z");
+  delayed.release(freshNow);
+  assert.equal(await pending, true);
+
+  const clientCalls = db.calls.filter((call) => call.client);
+  const timeoutIndex = clientCalls.findIndex((call) => /set_config\('lock_timeout'/i.test(call.sql));
+  const lockIndex = clientCalls.findIndex((call) => /pg_advisory_xact_lock/i.test(call.sql));
+  const clockIndex = clientCalls.findIndex((call) => /clock_timestamp\(\)/i.test(call.sql));
+  const deleteIndex = clientCalls.findIndex((call) => /DELETE FROM promonet\.offer_identity_keys/i.test(call.sql));
+  assert.deepEqual(clientCalls[timeoutIndex].args, ["5s"]);
+  assert.ok(timeoutIndex > 0 && timeoutIndex < lockIndex);
+  assert.ok(lockIndex < clockIndex && clockIndex < deleteIndex);
+  assert.equal(clientCalls.filter((call) => /clock_timestamp\(\)/i.test(call.sql)).length, 1);
+
+  const cleanup = clientCalls[deleteIndex];
+  const conflict = clientCalls.find((call) => /SELECT identity_key[\s\S]*FROM promonet\.offer_identity_keys/i.test(call.sql));
+  const insert = clientCalls.find((call) => /INSERT INTO promonet\.offer_identity_keys/i.test(call.sql));
+  assert.equal(cleanup.args[1].getTime(), freshNow.getTime());
+  assert.equal(conflict.args[1].getTime(), freshNow.getTime());
+  assert.equal(insert.args[4].getTime(), freshNow.getTime());
+  assert.equal(
+    db.identities.get(ITEM_1).reserved_until.getTime(),
+    new Date("2026-09-15T12:10:04.000Z").getTime(),
+  );
+});
+
+test("locks a documented two-integer namespace in numeric physical order and deduplicates hash collisions", async () => {
+  const db = new BehavioralDatabase();
+  const keys = [ITEM_2, COLLISION_URL_B, PRODUCT, ITEM_1, COLLISION_URL_A];
+  assert.equal(
+    createHash("sha256").update(COLLISION_URL_A).digest().readInt32BE(),
+    createHash("sha256").update(COLLISION_URL_B).digest().readInt32BE(),
+  );
+  assert.equal(await new CollectorStore(db).reserveOffer(keys, {
+    nicheId: "games", itemId: "MLB1", reservationId: RESERVATION_A,
+  }), true);
+
+  const lockCalls = db.calls.filter((call) => /pg_advisory_xact_lock/i.test(call.sql));
+  const expectedIds = [...new Set(keys.map((key) =>
+    createHash("sha256").update(key).digest().readInt32BE()
+  ))].sort((left, right) => left - right);
+  assert.equal(lockCalls.length, expectedIds.length);
+  assert.deepEqual(lockCalls.map((call) => call.args[1]), expectedIds);
+  assert.equal(new Set(lockCalls.map((call) => call.args[0])).size, 1);
+  assert.ok(lockCalls.every((call) => /\$1::integer\s*,\s*\$2::integer/i.test(call.sql)));
+  assert.equal(db.identities.size, keys.length);
+});
+
+test("real PostgreSQL contention grants a fresh ten-minute lease after the lock wait", {
+  skip: !process.env.PROMONET_TEST_DATABASE_URL,
+}, async () => {
+  const pool = new pg.Pool({ connectionString: process.env.PROMONET_TEST_DATABASE_URL, max: 3 });
+  const blocker = await pool.connect();
+  const key = `url:${createHash("sha256").update(randomUUID()).digest("hex")}`;
+  const lockId = createHash("sha256").update(key).digest().readInt32BE();
+  const reservationId = randomUUID();
+  let blockerTransaction = false;
+  try {
+    await pool.query("CREATE SCHEMA IF NOT EXISTS promonet");
+    const store = new CollectorStore(pool);
+    await store.init();
+    await blocker.query("BEGIN");
+    blockerTransaction = true;
+    await blocker.query(
+      "SELECT pg_advisory_xact_lock($1::integer,$2::integer)",
+      [0x50524f4d, lockId],
+    );
+
+    let settled = false;
+    const reservation = store.reserveOffer([key], {
+      nicheId: "integration", itemId: "MLB999999999", reservationId,
+    }).finally(() => { settled = true; });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(settled, false);
+    const releasedAt = (await blocker.query("SELECT clock_timestamp() AS released_at")).rows[0].released_at;
+    await blocker.query("COMMIT");
+    blockerTransaction = false;
+    assert.equal(await reservation, true);
+
+    const row = (await pool.query(
+      "SELECT reserved_until FROM promonet.offer_identity_keys WHERE identity_key=$1",
+      [key],
+    )).rows[0];
+    assert.ok(row.reserved_until.getTime() >= releasedAt.getTime() + 599_000);
+    await store.releaseOffer(reservationId);
+  } finally {
+    if (blockerTransaction) await blocker.query("ROLLBACK");
+    blocker.release();
+    await pool.end();
+  }
+});
+
 test("reservation is all-or-nothing when any identity was recently published", async () => {
   const db = new BehavioralDatabase([
     { identity_key: PRODUCT, published_at: new Date(), reservation_id: null, reserved_until: null },
@@ -279,6 +423,16 @@ test("reservation rolls back on failure and can be retried without a partial cla
   assert.equal(await store.reserveOffer([ITEM_1, PRODUCT], {
     nicheId: "games", itemId: "MLB1", reservationId: RESERVATION_A,
   }), true);
+});
+
+test("destroys a checked-out client when rollback fails", async () => {
+  const db = new BehavioralDatabase();
+  db.failNextReservationInsert = true;
+  db.failRollback = true;
+  await assert.rejects(() => new CollectorStore(db).reserveOffer([ITEM_1], {
+    nicheId: "games", itemId: "MLB1", reservationId: RESERVATION_A,
+  }), /simulated_insert_failure/);
+  assert.deepEqual(db.releases, [true]);
 });
 
 test("confirmation publishes only after acknowledgement and release removes only unconfirmed keys", async () => {
@@ -357,6 +511,10 @@ test("records only fixed nonnegative integer metrics through parameters", async 
   ]) {
     await assert.rejects(() => store.recordRound(ROUND_ID, invalid, startedAt), /invalid_round_metrics/);
   }
+  await assert.rejects(
+    () => store.recordRound(ROUND_ID, summary),
+    /invalid_round_started_at/,
+  );
   assert.equal(db.rounds.length, 1);
 });
 

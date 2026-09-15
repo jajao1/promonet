@@ -3,6 +3,10 @@ import { createHash } from "node:crypto";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const IDENTITY_KEY = /^(?:item|url|product):[A-Za-z0-9._-]{1,256}$/;
 const INCIDENT_KEY = /^[a-z][a-z0-9_.-]{0,63}$/;
+// PostgreSQL's two-integer advisory locks occupy a namespace distinct from
+// bigint singleton locks. "PROM" scopes the second integer to reservations.
+const RESERVATION_LOCK_NAMESPACE = 0x50524f4d;
+const RESERVATION_LOCK_TIMEOUT = "5s";
 const ROUND_METRICS = new Set([
   "claimed",
   "discovered",
@@ -37,8 +41,10 @@ function requireIncidentKey(key) {
   if (typeof key !== "string" || !INCIDENT_KEY.test(key)) throw Error("invalid_incident_key");
 }
 
-function advisoryLockId(key) {
-  return createHash("sha256").update(key).digest().readBigInt64BE().toString();
+function reservationLockIds(keys) {
+  return [...new Set(keys.map((key) =>
+    createHash("sha256").update(key).digest().readInt32BE()
+  ))].sort((left, right) => left - right);
 }
 
 function validateMetrics(summary) {
@@ -98,7 +104,10 @@ CREATE TABLE IF NOT EXISTS promonet.offer_publications(
   UNIQUE(niche_id,item_id,published_day)
 );
 CREATE TABLE IF NOT EXISTS promonet.offer_identity_keys(
-  identity_key TEXT PRIMARY KEY CHECK(identity_key ~ '^(item|url|product):[A-Za-z0-9._-]{1,256}$'),
+  identity_key TEXT PRIMARY KEY CHECK(
+    identity_key ~ '^(item|url|product):[A-Za-z0-9._-]+$'
+    AND length(split_part(identity_key,':',2)) BETWEEN 1 AND 256
+  ),
   reservation_id UUID,
   reserved_until TIMESTAMPTZ,
   published_at TIMESTAMPTZ,
@@ -204,42 +213,57 @@ CREATE INDEX IF NOT EXISTS collector_incidents_active_idx
     requireUuid(options.reservationId, "reservation_id");
 
     const uniqueKeys = [...new Set(keys)].sort();
+    const lockIds = reservationLockIds(uniqueKeys);
     const client = await this.db.connect();
     let transactionOpen = false;
+    let reusableClient = false;
     try {
       await client.query("BEGIN");
       transactionOpen = true;
-      for (const key of uniqueKeys) {
-        await client.query("SELECT pg_advisory_xact_lock($1::bigint)", [advisoryLockId(key)]);
+      await client.query(
+        "SELECT set_config('lock_timeout',$1,true)",
+        [RESERVATION_LOCK_TIMEOUT],
+      );
+      for (const lockId of lockIds) {
+        await client.query(
+          "SELECT pg_advisory_xact_lock($1::integer,$2::integer)",
+          [RESERVATION_LOCK_NAMESPACE, lockId],
+        );
+      }
+      const clock = await client.query("SELECT clock_timestamp() AS reservation_now");
+      const reservationNow = clock.rows[0]?.reservation_now;
+      if (!(reservationNow instanceof Date) || !Number.isFinite(reservationNow.getTime())) {
+        throw Error("reservation_clock_invalid");
       }
       await client.query(
         `DELETE FROM promonet.offer_identity_keys
          WHERE identity_key=ANY($1::text[])
            AND published_at IS NULL
-           AND reserved_until <= now()`,
-        [uniqueKeys],
+           AND reserved_until <= $2::timestamptz`,
+        [uniqueKeys, reservationNow],
       );
       const conflict = await client.query(
         `SELECT identity_key
          FROM promonet.offer_identity_keys
          WHERE identity_key=ANY($1::text[])
            AND (
-             published_at >= now()-interval '7 days'
-             OR (reservation_id IS NOT NULL AND reserved_until > now())
+             published_at >= $2::timestamptz-interval '7 days'
+             OR (reservation_id IS NOT NULL AND reserved_until > $2::timestamptz)
            )
          LIMIT 1`,
-        [uniqueKeys],
+        [uniqueKeys, reservationNow],
       );
       if (conflict.rows.length) {
         await client.query("COMMIT");
         transactionOpen = false;
+        reusableClient = true;
         return false;
       }
       const inserted = await client.query(
         `INSERT INTO promonet.offer_identity_keys(
            identity_key,reservation_id,reserved_until,published_at,niche_id,item_id
          )
-         SELECT identity_key,$2::uuid,now()+interval '10 minutes',NULL,$3,$4
+         SELECT identity_key,$2::uuid,$5::timestamptz+interval '10 minutes',NULL,$3,$4
          FROM unnest($1::text[]) AS keys(identity_key)
          ON CONFLICT(identity_key) DO UPDATE SET
            reservation_id=EXCLUDED.reservation_id,
@@ -248,23 +272,33 @@ CREATE INDEX IF NOT EXISTS collector_incidents_active_idx
            niche_id=EXCLUDED.niche_id,
            item_id=EXCLUDED.item_id
          RETURNING identity_key`,
-        [uniqueKeys, options.reservationId, options.nicheId.trim(), options.itemId.trim()],
+        [
+          uniqueKeys,
+          options.reservationId,
+          options.nicheId.trim(),
+          options.itemId.trim(),
+          reservationNow,
+        ],
       );
       if (inserted.rows.length !== uniqueKeys.length) throw Error("reservation_incomplete");
       await client.query("COMMIT");
       transactionOpen = false;
+      reusableClient = true;
       return true;
     } catch (error) {
       if (transactionOpen) {
         try {
           await client.query("ROLLBACK");
+          transactionOpen = false;
+          reusableClient = true;
         } catch {
           // Preserve the transaction's original failure.
         }
       }
       throw error;
     } finally {
-      client.release();
+      if (reusableClient) client.release();
+      else client.release(true);
     }
   }
 
@@ -289,7 +323,7 @@ CREATE INDEX IF NOT EXISTS collector_incidents_active_idx
     return result.rowCount > 0;
   }
 
-  async recordRound(roundId, summary, startedAt = new Date()) {
+  async recordRound(roundId, summary, startedAt) {
     requireUuid(roundId, "round_id");
     validateMetrics(summary);
     if (!(startedAt instanceof Date) || !Number.isFinite(startedAt.getTime())) {
