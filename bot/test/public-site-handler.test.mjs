@@ -128,6 +128,24 @@ test("never redirects unknown, expired, or unsafe outbound offers", async () => 
   }
 });
 
+test("serves robots rules and an active-only XML sitemap", async () => {
+  const store = {
+    listSitemapCategories: async () => [{ slug: "games", lastModified: "2026-09-13T12:00:00Z" }],
+    listSitemapOffers: async () => [{ category: "games", itemId: "MLB1", lastModified: "2026-09-14T12:00:00Z" }],
+  };
+  const handler = publicSiteHandler({ store });
+  const robots = response(); await handler({ method: "GET", url: "/robots.txt" }, robots);
+  assert.equal(robots.status, 200);
+  assert.match(robots.body, /Disallow: \/api\//);
+  assert.match(robots.body, /Disallow: \/ir\//);
+  assert.match(robots.body, /Sitemap: https:\/\/promomega\.com\.br\/sitemap\.xml/);
+  const sitemap = response(); await handler({ method: "GET", url: "/sitemap.xml" }, sitemap);
+  assert.equal(sitemap.headers["content-type"], "application/xml; charset=utf-8");
+  assert.match(sitemap.body, /<loc>https:\/\/promomega\.com\.br\/categoria\/games<\/loc>/);
+  assert.match(sitemap.body, /<loc>https:\/\/promomega\.com\.br\/oferta\/games\/MLB1<\/loc>/);
+  assert.doesNotMatch(sitemap.body, /\/ir\//);
+});
+
 test("returns false for routes it does not own", async () => {
   assert.equal(await publicSiteHandler({ store: {} })({ method: "POST", url: "/webhooks/evolution" }, response()), false);
 });

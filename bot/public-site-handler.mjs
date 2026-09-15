@@ -40,6 +40,14 @@ function pageError(res, status, title, message) {
   sendHtml(res, status, renderErrorPage({ status, title, message }), "noindex,follow");
 }
 
+function sendDocument(res, contentType, body, cacheControl) {
+  res.writeHead(200, { "content-type": contentType, "content-length": String(Buffer.byteLength(body)), "cache-control": cacheControl, "x-content-type-options": "nosniff" });
+  res.end(body);
+}
+
+const xml = (value) => String(value).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character]);
+const sitemapEntry = (path, lastModified) => `<url><loc>${xml(`https://promomega.com.br${path}`)}</loc>${lastModified ? `<lastmod>${xml(new Date(lastModified).toISOString())}</lastmod>` : ""}</url>`;
+
 function parseOffers(url) {
   const query = (url.searchParams.get("q") ?? "").trim();
   const category = url.searchParams.get("category") ?? "";
@@ -94,6 +102,21 @@ export function publicSiteHandler({ store, randomUUID = defaultRandomUUID, siteC
     }
     if (url.pathname === "/api/site-config") {
       send(res, 200, { whatsAppGroupUrl: safeWhatsAppGroupUrl(siteConfig.whatsAppGroupUrl) });
+      return true;
+    }
+    if (url.pathname === "/robots.txt") {
+      const body = "User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /ir/\nDisallow: /oauth/\nDisallow: /admin/\nSitemap: https://promomega.com.br/sitemap.xml\n";
+      sendDocument(res, "text/plain; charset=utf-8", body, "public, max-age=3600");
+      return true;
+    }
+    if (url.pathname === "/sitemap.xml") {
+      try {
+        const [categories, offers] = await Promise.all([store.listSitemapCategories(), store.listSitemapOffers()]);
+        const entries = [sitemapEntry("", null),
+          ...categories.map((category) => sitemapEntry(`/categoria/${encodeURIComponent(category.slug)}`, category.lastModified)),
+          ...offers.map((offer) => sitemapEntry(`/oferta/${encodeURIComponent(offer.category)}/${encodeURIComponent(offer.itemId)}`, offer.lastModified))];
+        sendDocument(res, "application/xml; charset=utf-8", `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${entries.join("")}</urlset>`, "public, max-age=900, stale-while-revalidate=3600");
+      } catch { send(res, 503, { error: "temporarily_unavailable" }, { "cache-control": "no-store" }); }
       return true;
     }
     if (url.pathname === "/") {
