@@ -107,3 +107,59 @@ test("successful collection schedules from the time it finishes", async () => {
 
   assert.deepEqual(waits, [8 * 60 * 60 * 1_000]);
 });
+
+test("aborting a closed-window sleep exits without a later collection", async () => {
+  const controller = new AbortController();
+  const logs = [];
+  let calls = 0;
+  let delayed;
+
+  const loop = runCollectorLoop({
+    enabled: true,
+    collect: async () => calls++,
+    delay: (ms, _value, {signal} = {}) => new Promise((resolve, reject) => {
+      delayed = {ms, signal};
+      signal?.addEventListener("abort", () => {
+        const error = new Error("collector stopped");
+        error.name = "AbortError";
+        reject(error);
+      }, {once: true});
+    }),
+    log: value => logs.push(value),
+    now: () => new Date("2026-09-16T02:00:00Z"),
+    signal: controller.signal,
+  });
+
+  assert.equal(delayed.ms, 8 * 60 * 60 * 1_000);
+  assert.equal(delayed.signal, controller.signal);
+  controller.abort();
+  await loop;
+  await Promise.resolve();
+
+  assert.equal(calls, 0);
+  assert.deepEqual(logs, []);
+});
+
+test("intentional AbortError from collection exits without an unavailable log", async () => {
+  const controller = new AbortController();
+  const waits = [];
+  const logs = [];
+
+  await runCollectorLoop({
+    enabled: true,
+    collect: async () => {
+      controller.abort();
+      const error = new Error("collector stopped");
+      error.name = "AbortError";
+      throw error;
+    },
+    delay: async ms => waits.push(ms),
+    log: value => logs.push(value),
+    now: () => openTime,
+    signal: controller.signal,
+    iterations: 1,
+  });
+
+  assert.deepEqual(waits, []);
+  assert.deepEqual(logs, []);
+});

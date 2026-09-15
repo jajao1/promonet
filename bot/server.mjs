@@ -118,15 +118,18 @@ async function main() {
   console.log(
     JSON.stringify({ event: "ready", dryRun, routes: routes.length, collectorEnabled }),
   );
+  const collectorController = new AbortController();
+  let collectorLoop = Promise.resolve();
   if (collectorEnabled) {
     const collectorStore = new CollectorStore(pool);
     await collectorStore.init();
     const source = new OfficialOfferSource();
     const collectorLogger = { info: data => console.log(JSON.stringify(data)), error: data => console.error(JSON.stringify(data)) };
-    void runCollectorLoop({ enabled: true, collect: () => collectDue({ store: collectorStore, niches, source, authorizedToken: () => authorizedToken({ oauth: oauthClient, tokens: tokenStore }), meli: clients.meli, evolution: clients.evolution, sessionAlert, dryRun, sendDelayMs: collectorSendDelayMs, logger: collectorLogger }) });
+    collectorLoop = runCollectorLoop({ enabled: true, collect: () => collectDue({ store: collectorStore, niches, source, authorizedToken: () => authorizedToken({ oauth: oauthClient, tokens: tokenStore }), meli: clients.meli, evolution: clients.evolution, sessionAlert, dryRun, sendDelayMs: collectorSendDelayMs, logger: collectorLogger }), signal: collectorController.signal });
   }
   const stop = () => {
     running = false;
+    collectorController.abort();
     server.close();
   };
   process.on("SIGTERM", stop);
@@ -139,6 +142,7 @@ async function main() {
       await delay(5000);
     }
   }
+  await collectorLoop;
   lock.release();
   await pool.end();
 }
