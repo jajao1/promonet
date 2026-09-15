@@ -42,6 +42,12 @@ test("ignores capacity variants but preserves model generations and distinguishi
   );
 });
 
+test("removes decimal comma and decimal point capacity variants completely", () => {
+  const reference = productFingerprint("Notebook Gamer 2TB");
+  assert.equal(productFingerprint("Notebook Gamer 1,5TB"), reference);
+  assert.equal(productFingerprint("Notebook Gamer 1.5 TB"), reference);
+});
+
 test("keeps meaningful bundle quantities distinct", () => {
   assert.notEqual(
     productFingerprint("Kit 2 Controles Sony DualSense PS5"),
@@ -67,6 +73,28 @@ test("normalizes an attached plus symbol without collapsing it into the base mod
   );
 });
 
+test("normalizes spaced and full-width plus variants", () => {
+  const spelled = productFingerprint("Samsung Galaxy S24 Plus 128GB");
+  assert.equal(productFingerprint("Samsung Galaxy S24 + 256GB"), spelled);
+  assert.equal(productFingerprint("Samsung Galaxy S24＋ 512GB"), spelled);
+  assert.notEqual(
+    productFingerprint("Samsung Galaxy S24 + 256GB"),
+    productFingerprint("Samsung Galaxy S24 256GB"),
+  );
+});
+
+test("removes marker values only for bounded colors and apparel sizes", () => {
+  assert.notEqual(
+    productFingerprint("Monitor tamanho 27"),
+    productFingerprint("Monitor tamanho 32"),
+  );
+  assert.notEqual(productFingerprint("TV 55"), productFingerprint("TV 65"));
+  assert.notEqual(
+    productFingerprint("Notebook cor i7"),
+    productFingerprint("Notebook cor i5"),
+  );
+});
+
 test("canonicalizes query ordering and removes fragments and tracking parameters", () => {
   const first = canonicalProductUrl(
     "https://produto.mercadolivre.com.br/MLB-1234567890-item?utm_source=email&variation=2&attributes=COLOR%3Ablue&tracking=abc#recommendation",
@@ -82,12 +110,54 @@ test("canonicalizes query ordering and removes fragments and tracking parameters
   );
 });
 
+test("normalizes accepted item and catalog trailing-slash variants", () => {
+  assert.equal(
+    canonicalProductUrl("https://produto.mercadolivre.com.br/MLB-123-item/"),
+    canonicalProductUrl("https://produto.mercadolivre.com.br/MLB-123-item"),
+  );
+  assert.equal(
+    canonicalProductUrl("https://www.mercadolivre.com.br/controle/p/MLB18010993/"),
+    canonicalProductUrl("https://www.mercadolivre.com.br/controle/p/MLB18010993"),
+  );
+});
+
 test("canonicalizes catalog URLs while preserving product-defining query values", () => {
   assert.equal(
     canonicalProductUrl(
       "https://www.mercadolivre.com.br/controle-sony/p/MLB18010993?variation=3&variation=2&mkt_tool=123#reviews",
     ),
-    "https://www.mercadolivre.com.br/controle-sony/p/MLB18010993?variation=2&variation=3",
+    "https://www.mercadolivre.com.br/controle-sony/p/MLB18010993?variation=3&variation=2",
+  );
+});
+
+test("preserves query key spelling and repeated-value order while sorting distinct keys", () => {
+  const expected =
+    "https://produto.mercadolivre.com.br/MLB-123-item?Filter=b&Filter=a&variation=2&Zeta=9";
+  assert.equal(
+    canonicalProductUrl(
+      "https://produto.mercadolivre.com.br/MLB-123-item?Zeta=9&Filter=b&variation=2&Filter=a",
+    ),
+    expected,
+  );
+  assert.equal(
+    canonicalProductUrl(
+      "https://produto.mercadolivre.com.br/MLB-123-item?variation=2&Filter=b&Filter=a&Zeta=9",
+    ),
+    expected,
+  );
+  const caseStable =
+    "https://produto.mercadolivre.com.br/MLB-123-item?Filter=upper&filter=lower";
+  assert.equal(
+    canonicalProductUrl(
+      "https://produto.mercadolivre.com.br/MLB-123-item?filter=lower&Filter=upper",
+    ),
+    caseStable,
+  );
+  assert.equal(
+    canonicalProductUrl(
+      "https://produto.mercadolivre.com.br/MLB-123-item?Filter=upper&filter=lower",
+    ),
+    caseStable,
   );
 });
 
@@ -148,6 +218,29 @@ test("emits uppercase item and SHA-256 canonical URL and product identities", ()
     `url:${digest(canonical)}`,
     `product:${digest(fingerprint)}`,
   ]);
+});
+
+test("rejects missing malformed and URL-mismatched item IDs", () => {
+  const offer = {
+    title: "Furadeira Bosch GSB 13 RE",
+    permalink: "https://produto.mercadolivre.com.br/MLB-123-x",
+  };
+  for (const itemId of [null, undefined, "", "   ", "123", "MLB-123", "MLBPROD"]) {
+    assert.throws(() => offerIdentities({ ...offer, itemId }), /invalid_item_id/);
+  }
+  assert.throws(
+    () => offerIdentities({ ...offer, itemId: "MLB124" }),
+    /item_id_mismatch/,
+  );
+});
+
+test("accepts a matching numeric catalog product ID without a hyphen", () => {
+  const identities = offerIdentities({
+    itemId: "mlb18010993",
+    title: "Controle Sony DualSense PS5",
+    permalink: "https://www.mercadolivre.com.br/controle-sony/p/MLB18010993",
+  });
+  assert.equal(identities[0], "item:MLB18010993");
 });
 
 test("omits product identities for fingerprints with fewer than two meaningful tokens", () => {
