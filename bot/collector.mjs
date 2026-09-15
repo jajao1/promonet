@@ -133,39 +133,81 @@ function classifyCandidates(states, recentIdentityKeys, summary) {
   return eligible;
 }
 
+async function reserveSelected({
+  eligible, statesByNiche, store, randomUUID, logger, summary, roundId, roundLimit, perNiche,
+}) {
+  const accepted = [];
+  const acceptedCandidates = new Set();
+  const rejectedCandidates = new Set();
+  let selection;
+
+  while (true) {
+    const pinnedEntries = new Map();
+    const pinned = accepted.map((entry, index) => {
+      const candidate = { ...entry.candidate, rank: -1_000_000_000 + index };
+      pinnedEntries.set(candidate, entry);
+      return candidate;
+    });
+    selection = diversifyOfferPool([
+      ...pinned,
+      ...eligible.filter((candidate) =>
+        !acceptedCandidates.has(candidate) && !rejectedCandidates.has(candidate)
+      ),
+    ], { limit: roundLimit, perNiche, recentIds: new Set() });
+    const candidates = selection.selected.filter((candidate) => !pinnedEntries.has(candidate));
+    if (!candidates.length) {
+      return {
+        entries: selection.selected.map((candidate) => pinnedEntries.get(candidate)).filter(Boolean),
+        selection,
+        hadReservationFailure: rejectedCandidates.size > 0,
+      };
+    }
+
+    for (const candidate of candidates) {
+      const state = statesByNiche.get(candidate.nicheId);
+      state.selected.push(candidate);
+      const context = { roundId, niche: state.niche, categoryId: state.categoryId, offer: candidate };
+      const reservationId = randomUUID();
+      let reserved;
+      try {
+        reserved = await store.reserveOffer(candidate.identityKeys, {
+          nicheId: candidate.nicheId,
+          itemId: candidate.itemId,
+          reservationId,
+        });
+      } catch {
+        summary.failed++;
+        summary.reservationRejected++;
+        summary.skipped++;
+        state.outcomes.push("reservation_error");
+        rejectedCandidates.add(candidate);
+        fixedLog(logger, "error", eventPayload("collector_offer", context, "reservation_error"));
+        continue;
+      }
+      if (!reserved) {
+        summary.reservationRejected++;
+        summary.skipped++;
+        state.outcomes.push("reservation_rejected");
+        rejectedCandidates.add(candidate);
+        fixedLog(logger, "info", eventPayload("collector_offer", context, "reservation_rejected"));
+        continue;
+      }
+      summary.reserved++;
+      acceptedCandidates.add(candidate);
+      accepted.push({ candidate, reservationId });
+    }
+  }
+}
+
 async function publishSelected({
-  selected, statesByNiche, store, meli, evolution, sessionAlert, composeCard,
+  reservedEntries, statesByNiche, store, meli, evolution, sessionAlert, composeCard,
   randomUUID, delay, sendDelayMs, logger, summary, roundId,
 }) {
   const alertState = { sent: false };
-  for (let index = 0; index < selected.length; index++) {
-    const candidate = selected[index];
+  for (let index = 0; index < reservedEntries.length; index++) {
+    const { candidate, reservationId } = reservedEntries[index];
     const state = statesByNiche.get(candidate.nicheId);
     const context = { roundId, niche: state.niche, categoryId: state.categoryId, offer: candidate };
-    const reservationId = randomUUID();
-    let reserved;
-    try {
-      reserved = await store.reserveOffer(candidate.identityKeys, {
-        nicheId: candidate.nicheId,
-        itemId: candidate.itemId,
-        reservationId,
-      });
-    } catch {
-      summary.failed++;
-      summary.reservationRejected++;
-      summary.skipped++;
-      state.outcomes.push("reservation_error");
-      fixedLog(logger, "error", eventPayload("collector_offer", context, "reservation_error"));
-      continue;
-    }
-    if (!reserved) {
-      summary.reservationRejected++;
-      summary.skipped++;
-      state.outcomes.push("reservation_rejected");
-      fixedLog(logger, "info", eventPayload("collector_offer", context, "reservation_rejected"));
-      continue;
-    }
-    summary.reserved++;
 
     try {
       await store.savePreview(candidate.nicheId, candidate, "selected");
@@ -268,13 +310,31 @@ async function publishSelected({
       );
       if (!finalized) throw Error("finalization_reservation_missing");
     } catch {
-      summary.failed++;
-      summary.review++;
-      summary.finalizationFailed++;
-      await quarantineReservation(store, reservationId, logger, context);
-      await safeStoreAction(() => store.markReview(candidate.nicheId, candidate.itemId), logger, "review_persistence_failed", context);
-      state.outcomes.push("finalization_error");
-      fixedLog(logger, "error", eventPayload("collector_offer", context, "finalization_error"));
+      let reconciliation;
+      try {
+        reconciliation = await store.publicationFinalized(
+          reservationId, candidate.nicheId, candidate.itemId, affiliateUrl, candidate.identityKeys,
+        );
+      } catch {
+        reconciliation = null;
+      }
+      if (reconciliation === true) {
+        finalized = true;
+        fixedLog(logger, "info", eventPayload("collector_offer", context, "finalization_reconciled"));
+      } else {
+        summary.failed++;
+        summary.finalizationFailed++;
+        if (reconciliation === false) {
+          summary.review++;
+          await quarantineReservation(store, reservationId, logger, context);
+          await safeStoreAction(() => store.markReview(candidate.nicheId, candidate.itemId), logger, "review_persistence_failed", context);
+          state.outcomes.push("finalization_error");
+          fixedLog(logger, "error", eventPayload("collector_offer", context, "finalization_error"));
+        } else {
+          state.outcomes.push("finalization_unknown");
+          fixedLog(logger, "error", eventPayload("collector_offer", context, "finalization_unknown"));
+        }
+      }
     }
 
     if (finalized) {
@@ -282,7 +342,7 @@ async function publishSelected({
       state.outcomes.push("published");
       fixedLog(logger, "info", eventPayload("collector_offer", context, "published"));
     }
-    if (index < selected.length - 1) {
+    if (index < reservedEntries.length - 1) {
       await safeStoreAction(() => delay(sendDelayMs), logger, "collector_delay_failed", context);
     }
   }
@@ -404,17 +464,14 @@ export async function collectDue({
     const eligible = classifyCandidates(states, recentIdentityKeys, summary);
     const selection = diversifyOfferPool(eligible, { limit: roundLimit, perNiche, recentIds: new Set() });
     const { selected } = selection;
-    summary.rejectedDuplicate += selection.rejectedDuplicate.length;
-    summary.rejected += selection.rejectedDuplicate.length;
-    summary.rejectedQuota += selection.rejectedQuota.length;
-    summary.skipped += selection.rejectedDuplicate.length + selection.rejectedQuota.length;
     const statesByNiche = new Map(states.map((state) => [state.niche.id, state]));
-    for (const candidate of selected) statesByNiche.get(candidate.nicheId).selected.push(candidate);
-    for (const state of states) {
-      if (!state.fixedResult && state.selected.length === 0 && state.eligibleCount === 0) summary.empty++;
-    }
 
     if (dryRun) {
+      summary.rejectedDuplicate += selection.rejectedDuplicate.length;
+      summary.rejected += selection.rejectedDuplicate.length;
+      summary.rejectedQuota += selection.rejectedQuota.length;
+      summary.skipped += selection.rejectedDuplicate.length + selection.rejectedQuota.length;
+      for (const candidate of selected) statesByNiche.get(candidate.nicheId).selected.push(candidate);
       for (const candidate of selected) {
         const state = statesByNiche.get(candidate.nicheId);
         try {
@@ -433,10 +490,22 @@ export async function collectDue({
         }
       }
     } else {
+      const reserved = await reserveSelected({
+        eligible, statesByNiche, store, randomUUID, logger, summary, roundId, roundLimit, perNiche,
+      });
+      const finalSelection = reserved.hadReservationFailure ? reserved.selection : selection;
+      summary.rejectedDuplicate += finalSelection.rejectedDuplicate.length;
+      summary.rejected += finalSelection.rejectedDuplicate.length;
+      summary.rejectedQuota += finalSelection.rejectedQuota.length;
+      summary.skipped += finalSelection.rejectedDuplicate.length + finalSelection.rejectedQuota.length;
       await publishSelected({
-        selected, statesByNiche, store, meli, evolution, sessionAlert, composeCard,
+        reservedEntries: reserved.entries, statesByNiche, store, meli, evolution, sessionAlert, composeCard,
         randomUUID, delay, sendDelayMs, logger, summary, roundId,
       });
+    }
+
+    for (const state of states) {
+      if (!state.fixedResult && state.selected.length === 0 && state.eligibleCount === 0) summary.empty++;
     }
 
     for (const state of states) await complete(state, finishResult(state, dryRun));

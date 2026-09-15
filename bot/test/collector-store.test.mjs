@@ -37,9 +37,12 @@ class BehavioralDatabase {
     this.releases = [];
     this.now = new Date();
     this.nextLockDelay = null;
+    this.throwAfterCommit = false;
+    this.connections = 0;
   }
 
   async connect() {
+    this.connections++;
     return new BehavioralClient(this);
   }
 
@@ -234,6 +237,10 @@ class BehavioralClient {
       this.pendingPreviews.clear();
       this.inTransaction = false;
       this.db.release(this);
+      if (this.db.throwAfterCommit) {
+        this.db.throwAfterCommit = false;
+        throw Error("commit_response_lost");
+      }
       return { rows: [] };
     }
     if (sql === "ROLLBACK") {
@@ -254,6 +261,20 @@ class BehavioralClient {
     }
     if (/set_config\('lock_timeout'/i.test(sql)) {
       return { rows: [] };
+    }
+    if (/AS publication_finalized/i.test(sql)) {
+      const [reservationId, nicheId, itemId, affiliateUrl, keys] = args;
+      const publication = this.db.publications.some((row) =>
+        row.reservationId === reservationId && row.nicheId === nicheId &&
+        row.itemId === itemId && row.affiliateUrl === affiliateUrl
+      );
+      const preview = this.db.previews.get(`${nicheId}:${itemId}`);
+      const identities = keys.every((key) => {
+        const row = this.db.identities.get(key);
+        return row?.niche_id === nicheId && row.item_id === itemId && row.published_at && !row.reservation_id;
+      });
+      const reservationCleared = ![...this.db.identities.values()].some((row) => row.reservation_id === reservationId);
+      return { rows: [{ publication_finalized: Boolean(publication && preview?.state === "published" && identities && reservationCleared) }] };
     }
     if (/SELECT identity_key,niche_id,item_id[\s\S]*reservation_id=\$1::uuid[\s\S]*FOR UPDATE/i.test(sql)) {
       await this.db.acquire(`finalize:${args[0]}`, this);
@@ -278,9 +299,9 @@ class BehavioralClient {
         this.db.failNextFinalizationInsert = false;
         throw Error("simulated_finalization_failure");
       }
-      if (this.db.publications.some((row) => row.nicheId === args[0] && row.itemId === args[1])) return { rows: [], rowCount: 0 };
-      this.pendingPublications.push({ nicheId: args[0], itemId: args[1], affiliateUrl: args[2] });
-      return { rows: [{ item_id: args[1] }], rowCount: 1 };
+      if (this.db.publications.some((row) => row.nicheId === args[1] && row.itemId === args[2])) return { rows: [], rowCount: 0 };
+      this.pendingPublications.push({ reservationId: args[0], nicheId: args[1], itemId: args[2], affiliateUrl: args[3] });
+      return { rows: [{ item_id: args[2] }], rowCount: 1 };
     }
     if (/UPDATE promonet\.offer_previews[\s\S]*state='published'/i.test(sql)) {
       const key = `${args[0]}:${args[1]}`;
@@ -365,6 +386,8 @@ test("creates durable collector schema and saves previews without secrets", asyn
   assert.match(schema, /collector_runs/);
   assert.match(schema, /offer_previews/);
   assert.match(schema, /offer_publications/);
+  assert.match(schema, /offer_publications[\s\S]*reservation_id UUID/i);
+  assert.match(schema, /offer_publications_reservation_id_idx/i);
   assert.match(schema, /offer_identity_keys[\s\S]*identity_key TEXT PRIMARY KEY/i);
   assert.doesNotMatch(schema, /\{1,256\}/);
   assert.match(schema, /length\(split_part\(identity_key,':',2\)\) BETWEEN 1 AND 256/i);
@@ -702,6 +725,30 @@ test("a fresh store instance sees finalized identities after a simulated process
   assert.equal(await afterRestart.reserveOffer([ITEM_2, PRODUCT], {
     nicheId: "tools", itemId: "MLB2", reservationId: RESERVATION_B,
   }), false);
+});
+
+test("reconciles a committed finalization when the COMMIT response is lost", async () => {
+  const db = new BehavioralDatabase();
+  const store = new CollectorStore(db);
+  db.previews.set("games:MLB1", { state: "selected" });
+  await store.reserveOffer([ITEM_1, PRODUCT], {
+    nicheId: "games", itemId: "MLB1", reservationId: RESERVATION_A,
+  });
+  db.throwAfterCommit = true;
+  await assert.rejects(
+    () => store.finalizePublication(RESERVATION_A, "games", "MLB1", "https://meli.la/ours"),
+    /commit_response_lost/,
+  );
+  const connectionsBeforeReconciliation = db.connections;
+  assert.equal(await store.publicationFinalized(
+    RESERVATION_A, "games", "MLB1", "https://meli.la/ours", [ITEM_1, PRODUCT],
+  ), true);
+  assert.equal(db.connections, connectionsBeforeReconciliation + 1);
+  assert.ok(db.releases.includes(true));
+  assert.equal(await store.publicationFinalized(
+    RESERVATION_B, "games", "MLB1", "https://meli.la/ours", [ITEM_1, PRODUCT],
+  ), false);
+  assert.equal(db.previews.get("games:MLB1").state, "published");
 });
 
 test("finalization rolls back every write and poisons the client only when rollback fails", async () => {
@@ -1103,6 +1150,39 @@ test("claims enabled due niches in persisted rotated order", async () => {
   ];
   assert.deepEqual((await store.claimDueNiches(niches)).map((niche) => niche.id), ["games", "tools", "technology"]);
   assert.deepEqual(db.calls.filter((call) => /INSERT INTO promonet\.collector_runs/i.test(call.sql)).map((call) => call.args[0]), ["technology", "games", "tools"]);
+  assert.ok(db.calls.every((call) => call.client));
+  assert.deepEqual(db.releases, [false]);
+});
+
+test("claims exactly one enabled due niche in persisted rotation order", async () => {
+  const db = new ClaimDatabase({ rotation: 1 });
+  const store = new CollectorStore(db);
+  const niches = [
+    { id: "technology", enabled: true, intervalMinutes: 5 },
+    { id: "home", enabled: false, intervalMinutes: 5 },
+    { id: "games", enabled: true, intervalMinutes: 5 },
+    { id: "tools", enabled: true, intervalMinutes: 5 },
+  ];
+
+  assert.equal((await store.claimDueNiche(niches)).id, "games");
+  assert.deepEqual([...db.runs.keys()], ["games"]);
+  assert.deepEqual(
+    db.calls.filter((call) => /INSERT INTO promonet\.collector_runs/i.test(call.sql)).map((call) => call.args[0]),
+    ["games"],
+  );
+  assert.ok(db.calls.every((call) => call.client));
+  assert.deepEqual(db.releases, [false]);
+});
+
+test("single due niche claiming rolls back rotation and claims together", async () => {
+  const db = new ClaimDatabase({ rotation: 1, failClaimId: "games" });
+  const niches = [
+    { id: "tools", enabled: true, intervalMinutes: 5 },
+    { id: "games", enabled: true, intervalMinutes: 5 },
+  ];
+
+  await assert.rejects(() => new CollectorStore(db).claimDueNiche(niches), /claim_failed/);
+  assert.equal(db.runs.size, 0);
   assert.ok(db.calls.every((call) => call.client));
   assert.deepEqual(db.releases, [false]);
 });

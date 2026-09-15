@@ -75,6 +75,7 @@ function fakeStore(claimed, {
       for (const key of events.find((event) => event[0] === "reserve" && event[3] === reservationId)?.[2] ?? []) held.add(key);
       return true;
     },
+    publicationFinalized: async () => false,
     markReview: async (nicheId, itemId) => events.push(["review", nicheId, itemId]),
     completeRun: async (nicheId, result) => events.push(["complete", nicheId, result]),
     recordRound: async (roundId, summary, startedAt) => events.push(["round", roundId, { ...summary }, startedAt]),
@@ -259,6 +260,31 @@ test("reservation loss and known affiliate or composition failures never send an
   assert.equal(store.events.filter((event) => event[0] === "review").length, 2);
 });
 
+test("reservation conflicts backfill the per-niche quota from ranked spare candidates", async () => {
+  const claimed = [niche("tools", "MLB100", 2)];
+  const candidates = [offer(1, "MLB100"), offer(2, "MLB100"), offer(3, "MLB100")];
+  const store = fakeStore(claimed, { reservationRejected: new Set([candidates[0].itemId]) });
+  const sent = [];
+
+  const result = await collectDue(dependencies({
+    claimed,
+    store,
+    candidatesByCategory: new Map([["MLB100", candidates]]),
+    roundLimit: 2,
+    perNiche: 2,
+    evolution: { send: async (job) => { sent.push(job.text); return { key: { id: "ack" } }; } },
+  }));
+
+  assert.equal(result.reservationRejected, 1);
+  assert.equal(result.rejectedDuplicate, 0);
+  assert.equal(result.rejectedQuota, 0);
+  assert.equal(result.published, 2);
+  assert.equal(store.events.filter((event) => event[0] === "reserve").length, 3);
+  assert.equal(sent.length, 2);
+  assert.ok(sent.some((text) => text.includes(candidates[1].title)));
+  assert.ok(sent.some((text) => text.includes(candidates[2].title)));
+});
+
 test("an ambiguous send is quarantined and cannot be selected automatically on the next round", async () => {
   const claimed = [niche("games", "MLB100")];
   const candidate = offer(1, "MLB100");
@@ -350,6 +376,54 @@ test("an acknowledged send whose atomic finalization fails is quarantined and no
   assert.equal(result.published, 0);
   assert.equal(store.events.filter((event) => event[0] === "quarantine").length, 1);
   assert.doesNotMatch(JSON.stringify(logs), /password|secret/);
+});
+
+test("a lost finalization response is reconciled as published without review or quarantine", async () => {
+  const claimed = [niche("games", "MLB200")];
+  const candidate = offer(201, "MLB200");
+  const store = fakeStore(claimed);
+  store.finalizePublication = async () => { throw Error("commit_response_lost"); };
+  store.publicationFinalized = async (reservationId, nicheId, itemId, affiliateUrl, keys) => {
+    assert.match(reservationId, /^[0-9a-f-]{36}$/);
+    assert.equal(nicheId, "games");
+    assert.equal(itemId, candidate.itemId);
+    assert.equal(affiliateUrl, "https://meli.la/games");
+    assert.deepEqual(keys, offerIdentities(candidate));
+    return true;
+  };
+
+  const result = await collectDue(dependencies({
+    claimed,
+    candidatesByCategory: new Map([["MLB200", [candidate]]]),
+    store,
+  }));
+
+  assert.equal(result.delivered, 1);
+  assert.equal(result.published, 1);
+  assert.equal(result.finalizationFailed, 0);
+  assert.equal(result.review, 0);
+  assert.equal(store.events.some((event) => event[0] === "quarantine"), false);
+  assert.equal(store.events.some((event) => event[0] === "review"), false);
+});
+
+test("an unavailable finalization reconciliation does not falsely quarantine a possible commit", async () => {
+  const claimed = [niche("games", "MLB200")];
+  const candidate = offer(202, "MLB200");
+  const store = fakeStore(claimed);
+  store.finalizePublication = async () => { throw Error("commit_response_lost"); };
+  store.publicationFinalized = async () => { throw Error("database_unavailable"); };
+
+  const result = await collectDue(dependencies({
+    claimed,
+    candidatesByCategory: new Map([["MLB200", [candidate]]]),
+    store,
+  }));
+
+  assert.equal(result.published, 0);
+  assert.equal(result.finalizationFailed, 1);
+  assert.equal(result.review, 0);
+  assert.equal(store.events.some((event) => event[0] === "quarantine"), false);
+  assert.equal(store.events.some((event) => event[0] === "review"), false);
 });
 
 test("spaces acknowledged sends even when finalization fails and ignores a failed injected delay", async () => {
@@ -504,4 +578,29 @@ test("collectOnce uses reservation affiliate branded JPEG delivery and durable a
   assert.deepEqual(order, ["reserve", "affiliate", "compose", "send", "quarantine"]);
   assert.equal(store.events.filter((event) => event[0] === "release").length, 0);
   assert.equal(store.events.filter((event) => event[0] === "finalize").length, 0);
+});
+
+test("collectOnce processes exactly one niche through the modern atomic claim interface", async () => {
+  const due = [niche("tools", "MLB100"), niche("games", "MLB200")];
+  const store = fakeStore(due);
+  store.claimDueNiche = async (niches) => {
+    assert.deepEqual(niches, due);
+    return due[0];
+  };
+  store.claimDueNiches = async () => assert.fail("collectOnce must not claim the full due batch");
+  const listed = [];
+
+  const result = await collectOnce(dependencies({
+    claimed: due,
+    store,
+    candidatesByCategory: new Map(),
+    source: { list: async (categoryId) => { listed.push(categoryId); return [offer(1, categoryId)]; } },
+  }));
+
+  assert.equal(result, "published");
+  assert.deepEqual(listed, ["MLB100"]);
+  assert.deepEqual(
+    store.events.filter((event) => event[0] === "complete").map((event) => event[1]),
+    ["tools"],
+  );
 });

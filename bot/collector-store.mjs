@@ -112,11 +112,15 @@ CREATE TABLE IF NOT EXISTS promonet.offer_previews(
 CREATE TABLE IF NOT EXISTS promonet.offer_publications(
   niche_id TEXT NOT NULL,
   item_id TEXT NOT NULL,
+  reservation_id UUID,
   published_day DATE NOT NULL DEFAULT CURRENT_DATE,
   affiliate_url TEXT NOT NULL,
   published_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(niche_id,item_id,published_day)
 );
+ALTER TABLE promonet.offer_publications ADD COLUMN IF NOT EXISTS reservation_id UUID;
+CREATE UNIQUE INDEX IF NOT EXISTS offer_publications_reservation_id_idx
+  ON promonet.offer_publications(reservation_id) WHERE reservation_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS promonet.offer_identity_keys(
   identity_key TEXT PRIMARY KEY,
   reservation_id UUID,
@@ -249,6 +253,63 @@ CREATE INDEX IF NOT EXISTS collector_incidents_active_idx
       transactionOpen = false;
       reusableClient = true;
       return ordered;
+    } catch (error) {
+      if (transactionOpen) {
+        try {
+          await client.query("ROLLBACK");
+          transactionOpen = false;
+          reusableClient = true;
+        } catch {
+          // Preserve the claim or rotation failure.
+        }
+      }
+      throw error;
+    } finally {
+      if (reusableClient) client.release();
+      else client.release(true);
+    }
+  }
+
+  async claimDueNiche(niches) {
+    const enabled = niches.filter((candidate) => candidate.enabled);
+    if (!enabled.length) return null;
+
+    const client = await this.db.connect();
+    let transactionOpen = false;
+    let reusableClient = false;
+    try {
+      await client.query("BEGIN");
+      transactionOpen = true;
+      const rotation = await client.query(
+        `INSERT INTO promonet.collector_rotation(id,vertical_cursor) VALUES(1,0)
+         ON CONFLICT(id) DO UPDATE
+         SET vertical_cursor=(promonet.collector_rotation.vertical_cursor+1)%$1
+         RETURNING vertical_cursor`,
+        [enabled.length],
+      );
+      const start = Number(rotation.rows[0]?.vertical_cursor ?? 0) % enabled.length;
+      const ordered = enabled.slice(start).concat(enabled.slice(0, start));
+      let claimed = null;
+      for (const niche of ordered) {
+        const result = await client.query(
+          `INSERT INTO promonet.collector_runs(niche_id,last_started_at,last_result)
+           VALUES($1,now(),'running')
+           ON CONFLICT(niche_id) DO UPDATE
+           SET last_started_at=now(),last_result='running',updated_at=now()
+           WHERE promonet.collector_runs.last_started_at IS NULL
+             OR promonet.collector_runs.last_started_at + ($2 * interval '1 minute') <= now()
+           RETURNING niche_id`,
+          [niche.id, niche.intervalMinutes],
+        );
+        if (result.rows.length) {
+          claimed = niche;
+          break;
+        }
+      }
+      await client.query("COMMIT");
+      transactionOpen = false;
+      reusableClient = true;
+      return claimed;
     } catch (error) {
       if (transactionOpen) {
         try {
@@ -464,6 +525,7 @@ CREATE INDEX IF NOT EXISTS collector_incidents_active_idx
 
     const client = await this.db.connect();
     let transactionOpen = false;
+    let commitAttempted = false;
     let reusableClient = false;
     try {
       await client.query("BEGIN");
@@ -492,11 +554,11 @@ CREATE INDEX IF NOT EXISTS collector_incidents_active_idx
       );
       if (confirmed.rowCount !== reserved.rows.length) throw Error("finalization_incomplete");
       const publication = await client.query(
-        `INSERT INTO promonet.offer_publications(niche_id,item_id,affiliate_url)
-         VALUES($1,$2,$3)
+        `INSERT INTO promonet.offer_publications(reservation_id,niche_id,item_id,affiliate_url)
+         VALUES($1::uuid,$2,$3,$4)
          ON CONFLICT DO NOTHING
          RETURNING item_id`,
-        [nicheId, itemId, url],
+        [reservationId, nicheId, itemId, url],
       );
       if (publication.rowCount !== 1) throw Error("finalization_publication_conflict");
       const preview = await client.query(
@@ -506,12 +568,13 @@ CREATE INDEX IF NOT EXISTS collector_incidents_active_idx
         [nicheId, itemId, url],
       );
       if (preview.rowCount !== 1) throw Error("finalization_preview_missing");
+      commitAttempted = true;
       await client.query("COMMIT");
       transactionOpen = false;
       reusableClient = true;
       return true;
     } catch (error) {
-      if (transactionOpen) {
+      if (transactionOpen && !commitAttempted) {
         try {
           await client.query("ROLLBACK");
           transactionOpen = false;
@@ -521,6 +584,49 @@ CREATE INDEX IF NOT EXISTS collector_incidents_active_idx
         }
       }
       throw error;
+    } finally {
+      if (reusableClient) client.release();
+      else client.release(true);
+    }
+  }
+
+  async publicationFinalized(reservationId, nicheId, itemId, url, keys) {
+    requireUuid(reservationId, "reservation_id");
+    if (!validText(nicheId)) throw Error("invalid_niche_id");
+    if (!validText(itemId)) throw Error("invalid_item_id");
+    if (!validText(url)) throw Error("invalid_affiliate_url");
+    const uniqueKeys = requireIdentityKeys(keys);
+
+    const client = await this.db.connect();
+    let reusableClient = false;
+    try {
+      const result = await client.query(
+        `SELECT (
+           EXISTS (
+             SELECT 1 FROM promonet.offer_publications
+             WHERE reservation_id=$1::uuid
+               AND niche_id=$2 AND item_id=$3 AND affiliate_url=$4
+           )
+           AND EXISTS (
+             SELECT 1 FROM promonet.offer_previews
+             WHERE niche_id=$2 AND item_id=$3
+               AND state='published' AND affiliate_url=$4
+           )
+           AND (
+             SELECT count(*) FROM promonet.offer_identity_keys
+             WHERE identity_key=ANY($5::text[])
+               AND niche_id=$2 AND item_id=$3
+               AND published_at IS NOT NULL AND reservation_id IS NULL
+           )=cardinality($5::text[])
+           AND NOT EXISTS (
+             SELECT 1 FROM promonet.offer_identity_keys
+             WHERE reservation_id=$1::uuid
+           )
+         ) AS publication_finalized`,
+        [reservationId, nicheId, itemId, url, uniqueKeys],
+      );
+      reusableClient = true;
+      return result.rows[0]?.publication_finalized === true;
     } finally {
       if (reusableClient) client.release();
       else client.release(true);
