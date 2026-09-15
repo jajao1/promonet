@@ -147,6 +147,17 @@ const applianceCapacityTitles=[
   "Cafeteira com jarra térmica para café 1L",
 ];
 
+const capsuleCompatibilityTitles=[
+  "Cafeteira para cápsulas Dolce Gusto",
+  "Cafeteira compatível com cápsulas",
+];
+
+const bundledCapsuleTitles=[
+  "Cafeteira Dolce Gusto Preta 110v + 48 Cápsulas Starbucks",
+  "Cafeteira com 20 cápsulas de café inclusas",
+  "Cafeteira acompanha cápsulas de café",
+];
+
 test("uses product heads and usage-target context for ambiguous food terms",()=>{
   for(const title of contextualNonFoodTitles)
     assert.equal(isFoodOrBeverage({title,categoryId:"MLB31447"}),false,title);
@@ -253,6 +264,42 @@ test("applies appliance capacity probes through eligibility and diversification"
     diversifyOffers(allowed,{limit:10}).map(offer=>offer.itemId),
     allowed.map(offer=>offer.itemId),
   );
+});
+
+test("distinguishes capsule compatibility from included consumables",()=>{
+  for(const title of capsuleCompatibilityTitles)
+    assert.equal(isFoodOrBeverage({title,categoryId:"MLB9188"}),false,title);
+  for(const title of bundledCapsuleTitles)
+    assert.equal(isFoodOrBeverage({title,categoryId:"MLB9188"}),true,title);
+});
+
+test("applies capsule bundle classification through eligibility and diversification",()=>{
+  const candidate=(title,itemId,nicheId)=>({...item,title,itemId,nicheId,categoryId:"MLB9188"});
+  const allowed=capsuleCompatibilityTitles.map((title,index)=>candidate(title,`CAPSULE-OK${index}`,`capsule-ok-${index}`));
+  const rejected=bundledCapsuleTitles.map((title,index)=>candidate(title,`CAPSULE-FOOD${index}`,`capsule-food-${index}`));
+  for(const offer of allowed)
+    assert.equal(isEligibleOffer(offer,{categoryId:"MLB9188",recentIds:new Set()}),true,offer.title);
+  for(const offer of rejected)
+    assert.equal(isEligibleOffer(offer,{categoryId:"MLB9188",recentIds:new Set()}),false,offer.title);
+  assert.deepEqual(
+    diversifyOffers([...rejected,...allowed],{limit:10}).map(offer=>offer.itemId),
+    allowed.map(offer=>offer.itemId),
+  );
+});
+
+test("normalizes capsule and inclusion inflections contextually",()=>{
+  for(const title of [
+    "Cafeteira com cápsula Starbucks inclusa",
+    "Cafeteira com cápsulas Starbucks inclusas",
+    "Cafeteira com café incluso",
+    "Cafeteira com cafés inclusos",
+    "Cafeteira acompanha cápsula de café",
+    "Cafeteira acompanhando cápsulas de café",
+  ]) assert.equal(isFoodOrBeverage({title,categoryId:"MLB9188"}),true,title);
+  for(const title of [
+    "Cafeteira para cápsula Dolce Gusto",
+    "Cafeteira compatível com 20 cápsulas",
+  ]) assert.equal(isFoodOrBeverage({title,categoryId:"MLB9188"}),false,title);
 });
 
 test("rejects food before selecting an otherwise valid ranked offer while allowing clothing",()=>{
