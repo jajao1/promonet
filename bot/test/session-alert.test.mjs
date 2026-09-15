@@ -62,22 +62,34 @@ test("concurrent required calls claim one incident and send once", async () => {
   assert.equal(sends.length, 1);
 });
 
-test("a failed notification releases the incident and exposes only a fixed error", async () => {
+test("a failed notification releases the incident and rethrows the original send error without logging", async () => {
   const incidents = new PersistentIncidents();
+  const sendError = Error("evolution_send_failed");
+  const logged = [];
+  const originalLog = console.log;
+  const originalError = console.error;
   let attempts = 0;
   const alert = createAlert({
     incidents,
     send: async () => {
       attempts++;
-      if (attempts === 1) throw Error("upstream included api-key=super-secret");
+      if (attempts === 1) throw sendError;
     },
   }).alert;
 
-  await assert.rejects(alert.required(), (error) => {
-    assert.equal(error.message, "admin_whatsapp_notification_failed");
-    assert.doesNotMatch(String(error.stack), /super-secret/);
-    return true;
-  });
+  console.log = (...args) => logged.push(args);
+  console.error = (...args) => logged.push(args);
+  try {
+    await assert.rejects(alert.required(), (error) => {
+      assert.equal(error, sendError);
+      assert.equal(error.message, "evolution_send_failed");
+      return true;
+    });
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+  assert.deepEqual(logged, []);
   assert.deepEqual(incidents.resolved, ["meli_session"]);
   assert.equal(await alert.required(), true);
   assert.equal(attempts, 2);

@@ -20,13 +20,13 @@ export class SessionAlert {
         text: "A sessão de afiliados do Mercado Livre expirou. Envie uma nova requisição createLink para atualizar os cookies. As publicações ficarão pausadas até a sessão ser restaurada.",
       });
       return true;
-    } catch {
+    } catch (error) {
       try {
         await this.incidents.resolveIncident("meli_session");
       } catch {
         // The notification failure remains authoritative and must not expose storage details.
       }
-      throw Error("admin_whatsapp_notification_failed");
+      throw error;
     }
   }
 
