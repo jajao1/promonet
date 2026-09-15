@@ -156,6 +156,8 @@ const bundledCapsuleTitles=[
   "Cafeteira Dolce Gusto Preta 110v + 48 Cápsulas Starbucks",
   "Cafeteira com 20 cápsulas de café inclusas",
   "Cafeteira acompanha cápsulas de café",
+  "Cafeteira compatível com cápsulas Nespresso, inclui 10 cápsulas",
+  "Cafeteira compatível com cápsulas Dolce Gusto com 20 cápsulas inclusas",
 ];
 
 test("uses product heads and usage-target context for ambiguous food terms",()=>{
@@ -299,6 +301,7 @@ test("normalizes capsule and inclusion inflections contextually",()=>{
   for(const title of [
     "Cafeteira para cápsula Dolce Gusto",
     "Cafeteira compatível com 20 cápsulas",
+    "Cafeteira com filtro incluso compatível com cápsulas",
   ]) assert.equal(isFoodOrBeverage({title,categoryId:"MLB9188"}),false,title);
 });
 

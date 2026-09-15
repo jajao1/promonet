@@ -56,7 +56,7 @@ const FOOD_BRAND_SIGNALS = new Set([
   "pilao", "nescau", "fini", "ferrero", "rocher", "starbucks",
 ]);
 const CAPSULE_SIGNALS = new Set(["capsula"]);
-const CAPSULE_BRAND_SIGNALS = new Set(["starbucks", "dolce", "gusto", "nescafe", "pilao"]);
+const CAPSULE_BRAND_SIGNALS = new Set(["starbucks", "dolce", "gusto", "nescafe", "nespresso", "pilao"]);
 const PACKAGE_EVIDENCE = /(?:^| )(?:\d+x)?\d+(?:g|kg|ml|l)(?: |$)|(?:^| )(?:pacote|garrafa|caixa|lata|sache)(?:s)?(?: |$)/;
 const PACKAGE_NOUN_SIGNALS = new Set(["pacote", "garrafa", "caixa", "lata", "sache"]);
 const USAGE_RELATION_SIGNALS = new Set(["para", "de"]);
@@ -92,16 +92,24 @@ function componentIsFood(component) {
   const tokens = new Set(words);
   const earlyWords = words.slice(0, EARLY_HEAD_WINDOW);
   const nonFoodHeadIndex = earlyWords.findIndex(word => matchesSignal(word, NON_FOOD_HEAD_SIGNALS));
-  const capsuleIndex = words.findIndex(word => matchesSignal(word, CAPSULE_SIGNALS));
-  if (capsuleIndex >= 0) {
-    const capsuleRelations = words.slice(Math.max(0, nonFoodHeadIndex + 1), capsuleIndex);
-    const compatible = nonFoodHeadIndex >= 0 &&
-      (words[capsuleIndex - 1] === "para" || capsuleRelations.includes("compativel"));
-    if (compatible) return false;
-    const quantified = /^\d+$/.test(words[capsuleIndex - 1] ?? "");
-    const included = words.some(isInclusionSignal);
-    const branded = words.slice(capsuleIndex + 1).some(word => CAPSULE_BRAND_SIGNALS.has(word));
-    if (nonFoodHeadIndex < 0 || quantified || included || branded) return true;
+  const capsuleIndexes = words.flatMap((word, index) => matchesSignal(word, CAPSULE_SIGNALS) ? [index] : []);
+  if (capsuleIndexes.length) {
+    for (let occurrence = 0; occurrence < capsuleIndexes.length; occurrence += 1) {
+      const capsuleIndex = capsuleIndexes[occurrence];
+      const previousCapsuleIndex = capsuleIndexes[occurrence - 1] ?? nonFoodHeadIndex;
+      const nextCapsuleIndex = capsuleIndexes[occurrence + 1] ?? words.length;
+      const capsuleRelations = words.slice(Math.max(0, previousCapsuleIndex + 1), capsuleIndex);
+      const included = capsuleRelations.slice(-2).some(isInclusionSignal) ||
+        words.slice(capsuleIndex + 1, Math.min(nextCapsuleIndex, capsuleIndex + 4)).some(isInclusionSignal);
+      if (included) return true;
+      const compatible = nonFoodHeadIndex >= 0 &&
+        (words[capsuleIndex - 1] === "para" || capsuleRelations.includes("compativel"));
+      if (compatible) continue;
+      const quantified = /^\d+$/.test(words[capsuleIndex - 1] ?? "");
+      const branded = words.slice(capsuleIndex + 1, nextCapsuleIndex)
+        .some(word => CAPSULE_BRAND_SIGNALS.has(word));
+      if (nonFoodHeadIndex < 0 || quantified || branded) return true;
+    }
     return false;
   }
   const hasSignal = signal => tokens.has(signal) || tokens.has(`${signal}s`);
