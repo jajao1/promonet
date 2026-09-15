@@ -6,11 +6,13 @@ import { join } from "node:path";
 test("pins patched Sharp and installs the deterministic DejaVu runtime font", async () => {
   const packageJson = JSON.parse(await readFile(join(process.cwd(), "package.json"), "utf8"));
   const dockerfile = await readFile(join(process.cwd(), "Dockerfile"), "utf8");
+  const compose = await readFile(join(process.cwd(), "compose.yaml"), "utf8");
   const renderer = await readFile(join(process.cwd(), "bot", "offer-card.mjs"), "utf8");
   assert.equal(packageJson.dependencies.sharp, "0.35.4");
   assert.match(dockerfile, /RUN apk add --no-cache[^\n]*fontconfig[^\n]*ttf-dejavu/);
   assert.match(dockerfile, /RUN node scripts\/offer-card-smoke\.mjs/);
   assert.ok(dockerfile.indexOf("apk add --no-cache") < dockerfile.indexOf("USER node"));
+  assert.match(compose, /XDG_CACHE_HOME:\s*\/tmp\/\.cache/);
   assert.match(renderer, /font-family=["']DejaVu Sans/);
   assert.doesNotMatch(renderer, /font-family[^;\n]*Arial/);
 });

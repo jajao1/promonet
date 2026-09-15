@@ -97,6 +97,7 @@ services:
       - '127.0.0.1:${BOT_PORT:-3000}:3000'
     environment:
       NODE_ENV: production
+      XDG_CACHE_HOME: /tmp/.cache
       PORT: '3000'
       DATABASE_URL: postgresql://promonet:${POSTGRES_PASSWORD}@postgres:5432/promonet
       EVOLUTION_URL: http://evolution:8080
