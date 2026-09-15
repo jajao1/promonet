@@ -7,22 +7,39 @@ const FOOD_CATEGORY_IDS = new Set([
   "MLB455505",
   "MLB1423",
   "MLB1417",
+  "MLB269718",
+  "MLB455580",
+  "MLB194832",
 ]);
 
 const FOOD_TITLE_SIGNALS = [
-  "macarrao", "acucar", "refrigerante", "cafe", "arroz", "bebida", "alimento",
-  "feijao", "leite", "cerveja", "suco", "cha", "pao",
+  "macarrao", "acucar", "refrigerante", "arroz", "bebida", "alimento",
+  "feijao", "cerveja", "suco", "cha", "pao",
   "biscoito", "bolacha", "carne", "frango", "farinha", "azeite", "molho",
   "cereal", "salgadinho", "queijo", "mussarela", "manteiga", "margarina",
   "iogurte", "presunto", "mortadela", "salame", "bacon", "ovos",
 ];
 
 const CONTEXTUAL_FOOD_PHRASES = [
+  /(?:^| )agua (?:mineral|com gas)(?: |$)/,
+  /(?:^| )hamburguer(?:es)?(?: |$)/,
+  /(?:^| )cafe (?:torrado|moido|em graos|soluvel|em capsulas?)(?: |$)/,
+  /(?:^| )leite (?:integral|desnatado|semidesnatado|em po|condensado|zero lactose)(?: |$)/,
   /(?:^| )vinho (?:tinto|branco|rose|seco|suave|espumante)(?: |$)/,
   /(?:^| )(?:garrafa|caixa|kit) (?:de )?vinho(?: |$)/,
   /(?:^| )chocolate (?:ao leite|amargo|meio amargo|branco|em po|\d+g)(?: |$)/,
   /(?:^| )(?:barra|caixa|bombom|ovo) (?:de )?chocolate(?: |$)/,
+  /(?:^| )chocolate (?:[^ ]+ )*(?:lacta|nestle|garoto|hersheys|milka|neugebauer)(?: |$)/,
+  /(?:^| )(?:lacta|nestle|garoto|hersheys|milka|neugebauer)(?: [^ ]+)* chocolate(?: |$)/,
+  /(?:^| )chocolate(?: |$).* \d+(?:g|kg)(?: |$)/,
 ];
+
+const AMBIGUOUS_FOOD_TITLE_SIGNALS = ["cafe", "leite", "vinho", "chocolate"];
+const FASHION_TITLE_SIGNALS = new Set([
+  "camiseta", "camisa", "vestido", "sapato", "tenis", "body", "blusa", "calca",
+  "bermuda", "short", "saia", "casaco", "jaqueta", "moletom", "sandalia",
+  "chinelo", "bolsa", "bone", "chapeu", "cinto", "gravata", "roupa",
+]);
 
 function normalizedWords(value) {
   return typeof value === "string"
@@ -40,8 +57,12 @@ export function isFoodOrBeverage(offer) {
     .replace(/(?:^| )cafe racer(?: |$)/g, " ")
     .replace(/(?:^| )panela(?: eletrica)? (?:de|para) arroz(?: |$)/g, " ");
   const tokens = new Set(title.trim().split(/\s+/).filter(Boolean));
-  return FOOD_TITLE_SIGNALS.some(signal => tokens.has(signal)) ||
-    CONTEXTUAL_FOOD_PHRASES.some(pattern => pattern.test(title));
+  if (FOOD_TITLE_SIGNALS.some(signal => tokens.has(signal)) ||
+      CONTEXTUAL_FOOD_PHRASES.some(pattern => pattern.test(title))) return true;
+  const ambiguousFood = AMBIGUOUS_FOOD_TITLE_SIGNALS.some(signal => tokens.has(signal));
+  if (!ambiguousFood) return false;
+  if ([...tokens].some(token => FASHION_TITLE_SIGNALS.has(token))) return false;
+  return true;
 }
 
 function valid(candidate, categoryId, recentIds) {

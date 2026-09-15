@@ -46,6 +46,31 @@ test("does not confuse bounded food words with appliance, tool, or model names",
   ]) assert.equal(isFoodOrBeverage({title,categoryId:"MLB31447"}),false,title);
 });
 
+test("treats known official food leaf categories as authoritative",()=>{
+  for(const categoryId of ["MLB269718","MLB455580","MLB194832"])
+    assert.equal(isFoodOrBeverage({title:"Oferta especial",categoryId}),true,categoryId);
+});
+
+test("recognizes mineral water, hamburgers, and ordinary branded chocolate titles",()=>{
+  for(const title of [
+    "Água mineral sem gás 1,5L",
+    "Água com gás 500ml",
+    "Hambúrguer bovino congelado 12 unidades",
+    "Hamburguer artesanal bovino",
+    "Chocolate Lacta Diamante Negro 90g",
+    "Chocolate Nestlé Classic",
+  ]) assert.equal(isFoodOrBeverage({title,categoryId:"MLB31447"}),true,title);
+});
+
+test("allows ambiguous food words used only as fashion colors",()=>{
+  for(const title of [
+    "Camiseta feminina cor café",
+    "Body bebê branco leite",
+    "Vestido feminino cor vinho",
+    "Sapato feminino chocolate",
+  ]) assert.equal(isFoodOrBeverage({title,categoryId:"MLB31447"}),false,title);
+});
+
 test("rejects food before selecting an otherwise valid ranked offer while allowing clothing",()=>{
   const clothing={...item,itemId:"MLB2",title:"Camiseta masculina de algodão",categoryId:"MLB31447"};
   const food={...item,itemId:"MLB3",rank:0,title:"Macarrão espaguete 500g",categoryId:"MLB31447"};
