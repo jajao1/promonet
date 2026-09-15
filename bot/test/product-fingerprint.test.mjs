@@ -83,6 +83,19 @@ test("normalizes spaced and full-width plus variants", () => {
   );
 });
 
+test("normalizes plus markers before punctuation and adjacent model tokens", () => {
+  for (const [symbolic, spelled, base] of [
+    ["Samsung Galaxy S24+, 256GB", "Samsung Galaxy S24 Plus 128GB", "Samsung Galaxy S24 128GB"],
+    ["Samsung Galaxy S24+; 256GB", "Samsung Galaxy S24 Plus 128GB", "Samsung Galaxy S24 128GB"],
+    ["Samsung Galaxy S24+/5G 256GB", "Samsung Galaxy S24 Plus 5G 128GB", "Samsung Galaxy S24 5G 128GB"],
+    ["Samsung Galaxy S24+Pro 256GB", "Samsung Galaxy S24 Plus Pro 128GB", "Samsung Galaxy S24 Pro 128GB"],
+    ["Samsung Galaxy S24＋Pro 256GB", "Samsung Galaxy S24 Plus Pro 128GB", "Samsung Galaxy S24 Pro 128GB"],
+  ]) {
+    assert.equal(productFingerprint(symbolic), productFingerprint(spelled));
+    assert.notEqual(productFingerprint(symbolic), productFingerprint(base));
+  }
+});
+
 test("removes marker values only for bounded colors and apparel sizes", () => {
   assert.notEqual(
     productFingerprint("Monitor tamanho 27"),

@@ -39,8 +39,6 @@ const TRACKING_PARAMETERS = new Set([
 ]);
 
 const digest = (value) => createHash("sha256").update(value).digest("hex");
-const capacity = (token) => /^\d+(?:[.,]\d+)?(?:mb|gb|tb)$/i.test(token);
-const number = (token) => /^\d+(?:[.,]\d+)?$/.test(token);
 const apparelSize = (token) => APPAREL_SIZES.has(token) ||
   (/^\d{2}$/.test(token) && Number(token) >= 30 && Number(token) <= 60);
 
@@ -113,7 +111,7 @@ export function productFingerprint(title) {
     .toLowerCase()
     .normalize("NFD")
     .replace(/\p{M}+/gu, "")
-    .replace(/([\p{L}\p{N}])\s*[+＋](?=\s|$)/gu, "$1 plus ")
+    .replace(/[+＋]/gu, " plus ")
     .replace(/\b\d+(?:[.,]\d+)?\s*(?:mb|gb|tb)\b/gi, " ")
     .match(/[a-z0-9]+/g) ?? [];
   const apparel = tokens.some((token) => APPAREL.has(token));
@@ -130,11 +128,6 @@ export function productFingerprint(title) {
     }
     if (token === "tam" || token === "tamanho") {
       if (apparel && apparelSize(next)) index++;
-      continue;
-    }
-    if (capacity(token)) continue;
-    if (number(token) && /^(?:mb|gb|tb)$/i.test(next ?? "")) {
-      index++;
       continue;
     }
     if (SALES_NOISE.has(token) || COLORS.has(token) || GENDERS.has(token)) continue;
