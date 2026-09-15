@@ -22,6 +22,10 @@ test("identifies food and beverage categories and normalized Portuguese title si
     "Feijão carioca 1kg",
     "Leite integral 1L",
     "Chocolate ao leite 90g",
+    "Vinho tinto seco 750ml",
+    "Queijo mussarela fatiado 500g",
+    "Manteiga com sal 200g",
+    "Iogurte natural integral 170g",
   ]) assert.equal(isFoodOrBeverage({title,categoryId:"MLB31447"}),true,title);
   assert.equal(isFoodOrBeverage({title:"Oferta especial",categoryId:"MLB1403"}),true);
   assert.equal(isFoodOrBeverage({title:"Oferta especial",scopeCategoryId:"MLB278123"}),true);
@@ -37,6 +41,8 @@ test("does not confuse bounded food words with appliance, tool, or model names",
     "Alimentador automático para pets",
     "Panela elétrica para arroz",
     "Capacete Custom Café Racer",
+    "Vestido feminino cor vinho",
+    "Sapato feminino chocolate",
   ]) assert.equal(isFoodOrBeverage({title,categoryId:"MLB31447"}),false,title);
 });
 
@@ -74,4 +80,24 @@ test("handles sparse niches, invalid niche IDs, and duplicate item IDs determini
   const expected=["DUP","C2","G1","T2"];
   assert.deepEqual(diversifyOffers(candidates).map(offer=>offer.itemId),expected);
   assert.deepEqual(diversifyOffers(candidates).map(offer=>offer.itemId),expected);
+});
+
+test("enforces hard global and per-niche maxima even when callers request larger quotas",()=>{
+  const candidates=["tools","clothing","sneakers","phones","games","appliances"]
+    .flatMap(nicheId=>[1,2,3].map(index=>ranked(nicheId,`${nicheId}-${index}`)));
+  const selected=diversifyOffers(candidates,{limit:99,perNiche:99});
+  const counts=selected.reduce((map,offer)=>map.set(offer.nicheId,(map.get(offer.nicheId)??0)+1),new Map());
+  assert.equal(selected.length,10);
+  assert.ok([...counts.values()].every(count=>count<=2));
+});
+
+test("clamps non-positive integer quotas and rejects other invalid quota types deterministically",()=>{
+  const candidates=[ranked("tools","T1"),ranked("tools","T2"),ranked("clothing","C1")];
+  assert.deepEqual(diversifyOffers(candidates,{limit:-5,perNiche:0}).map(offer=>offer.itemId),["T1"]);
+  for(const options of [
+    {limit:1.5,perNiche:1},
+    {limit:2,perNiche:1.5},
+    {limit:NaN,perNiche:1},
+    {limit:2,perNiche:"2"},
+  ]) assert.deepEqual(diversifyOffers(candidates,options),[]);
 });

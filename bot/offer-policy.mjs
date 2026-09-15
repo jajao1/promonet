@@ -11,9 +11,17 @@ const FOOD_CATEGORY_IDS = new Set([
 
 const FOOD_TITLE_SIGNALS = [
   "macarrao", "acucar", "refrigerante", "cafe", "arroz", "bebida", "alimento",
-  "feijao", "leite", "chocolate", "cerveja", "vinho", "suco", "cha", "pao",
+  "feijao", "leite", "cerveja", "suco", "cha", "pao",
   "biscoito", "bolacha", "carne", "frango", "farinha", "azeite", "molho",
-  "cereal", "salgadinho",
+  "cereal", "salgadinho", "queijo", "mussarela", "manteiga", "margarina",
+  "iogurte", "presunto", "mortadela", "salame", "bacon", "ovos",
+];
+
+const CONTEXTUAL_FOOD_PHRASES = [
+  /(?:^| )vinho (?:tinto|branco|rose|seco|suave|espumante)(?: |$)/,
+  /(?:^| )(?:garrafa|caixa|kit) (?:de )?vinho(?: |$)/,
+  /(?:^| )chocolate (?:ao leite|amargo|meio amargo|branco|em po|\d+g)(?: |$)/,
+  /(?:^| )(?:barra|caixa|bombom|ovo) (?:de )?chocolate(?: |$)/,
 ];
 
 function normalizedWords(value) {
@@ -32,7 +40,8 @@ export function isFoodOrBeverage(offer) {
     .replace(/(?:^| )cafe racer(?: |$)/g, " ")
     .replace(/(?:^| )panela(?: eletrica)? (?:de|para) arroz(?: |$)/g, " ");
   const tokens = new Set(title.trim().split(/\s+/).filter(Boolean));
-  return FOOD_TITLE_SIGNALS.some(signal => tokens.has(signal));
+  return FOOD_TITLE_SIGNALS.some(signal => tokens.has(signal)) ||
+    CONTEXTUAL_FOOD_PHRASES.some(pattern => pattern.test(title));
 }
 
 function valid(candidate, categoryId, recentIds) {
@@ -70,9 +79,16 @@ export function selectOffer(candidates, options) {
   return selectOffers(candidates, { ...options, limit: 1 })[0] ?? null;
 }
 
+function boundedQuota(value, fallback, maximum) {
+  if (value === undefined) return fallback;
+  if (!Number.isInteger(value)) return null;
+  return Math.min(maximum, Math.max(1, value));
+}
+
 export function diversifyOffers(candidates, { limit = 10, perNiche = 2 } = {}) {
-  if (!Array.isArray(candidates) || !Number.isInteger(limit) || limit < 1 ||
-      !Number.isInteger(perNiche) || perNiche < 1) return [];
+  const effectiveLimit = boundedQuota(limit, 10, 10);
+  const effectivePerNiche = boundedQuota(perNiche, 2, 2);
+  if (!Array.isArray(candidates) || effectiveLimit === null || effectivePerNiche === null) return [];
 
   const groups = new Map();
   for (const candidate of candidates) {
@@ -88,10 +104,10 @@ export function diversifyOffers(candidates, { limit = 10, perNiche = 2 } = {}) {
   const selectedIds = new Set();
   const counts = new Map();
   let progressed = true;
-  while (selected.length < limit && progressed) {
+  while (selected.length < effectiveLimit && progressed) {
     progressed = false;
     for (const [nicheId, offers] of groups) {
-      if (selected.length >= limit || (counts.get(nicheId) ?? 0) >= perNiche) continue;
+      if (selected.length >= effectiveLimit || (counts.get(nicheId) ?? 0) >= effectivePerNiche) continue;
       let cursor = cursors.get(nicheId);
       while (cursor < offers.length && selectedIds.has(offers[cursor].itemId)) cursor += 1;
       cursors.set(nicheId, cursor + 1);
