@@ -116,6 +116,18 @@ export function publicSiteHandler({ store, randomUUID = defaultRandomUUID, siteC
       } catch { pageError(res, 503, "Site temporariamente indisponível", "Tente novamente em instantes."); }
       return true;
     }
+    const outboundMatch = url.pathname.match(/^\/ir\/([a-z0-9_-]{1,50})\/([a-z0-9_-]{1,80})$/i);
+    if (outboundMatch) {
+      try {
+        const offer = await store.findOfferPage(outboundMatch[1], outboundMatch[2]);
+        if (!offer) { pageError(res, 404, "Oferta não encontrada", "Esta oferta não foi localizada."); return true; }
+        if (offer.status !== "active" || !safeDestination(offer.affiliateUrl)) { pageError(res, 410, "Oferta indisponível", "Esta oferta não está mais disponível."); return true; }
+        await store.recordClick(outboundMatch[1], outboundMatch[2], randomUUID(), referrerHost(req.headers?.referer));
+        res.writeHead(302, { location: offer.affiliateUrl, "cache-control": "no-store", "referrer-policy": "no-referrer", "x-robots-tag": "noindex, nofollow" });
+        res.end();
+      } catch { send(res, 503, { error: "temporarily_unavailable" }, { "cache-control": "no-store", "x-robots-tag": "noindex, nofollow" }); }
+      return true;
+    }
     const match = url.pathname.match(/^\/oferta\/([a-z0-9_-]{1,50})\/([a-z0-9_-]{1,80})$/i);
     if (!match) {
       const asset = staticAssets.get(url.pathname);

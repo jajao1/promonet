@@ -104,6 +104,30 @@ test("applies expired, unavailable, unknown, and empty category semantics", asyn
   assert.equal(category.status, 404);
 });
 
+test("records an anonymous click only on the validated outbound route", async () => {
+  const clicks = [];
+  const active = { status: "active", affiliateUrl: "https://meli.la/abc" };
+  const handler = publicSiteHandler({ store: {
+    findOfferPage: async () => active,
+    recordClick: async (...args) => clicks.push(args),
+  }, randomUUID: () => "request-id" });
+  const res = response();
+  await handler({ method: "GET", url: "/ir/games/MLB1", headers: { referer: "https://promomega.com.br/oferta/games/MLB1" } }, res);
+  assert.equal(res.status, 302);
+  assert.equal(res.headers.location, "https://meli.la/abc");
+  assert.equal(res.headers["x-robots-tag"], "noindex, nofollow");
+  assert.deepEqual(clicks, [["games", "MLB1", "request-id", "promomega.com.br"]]);
+});
+
+test("never redirects unknown, expired, or unsafe outbound offers", async () => {
+  for (const offer of [null, { status: "expired", affiliateUrl: "https://meli.la/old" }, { status: "active", affiliateUrl: "https://evil.example/x" }]) {
+    const res = response();
+    await publicSiteHandler({ store: { findOfferPage: async () => offer } })({ method: "GET", url: "/ir/games/MLB1", headers: {} }, res);
+    assert.ok([404, 410].includes(res.status));
+    assert.equal(res.headers.location, undefined);
+  }
+});
+
 test("returns false for routes it does not own", async () => {
   assert.equal(await publicSiteHandler({ store: {} })({ method: "POST", url: "/webhooks/evolution" }, response()), false);
 });
