@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { createCollectorLoopOptions, parseCollectorConfig } from "../server-config.mjs";
+import {
+  createCollectorLoopOptions,
+  createCollectorSessionAlert,
+  parseCollectorConfig,
+} from "../server-config.mjs";
 const mod = await import("../core.mjs").catch(() => ({}));
 const route = {
   sourceGroup: "source@g.us",
@@ -201,16 +205,16 @@ test("collector configuration uses the approved production defaults", () => {
     dedupDays: 7,
     logoPath: "/app/site/logo.jpg",
     sendDelayMs: 15_000,
-    adminWhatsapp: null,
+    adminWhatsapp: "5543991724961",
   });
 });
 
-test("collector configuration accepts every supported boundary", () => {
+test("collector configuration accepts supported numeric boundaries with the fixed operating window", () => {
   assert.deepEqual(parseCollectorConfig({
-    COLLECTOR_INTERVAL_MINUTES: "5",
+    COLLECTOR_INTERVAL_MINUTES: "1440",
     COLLECTOR_TIME_ZONE: "America/Sao_Paulo",
-    COLLECTOR_START_HOUR: "0",
-    COLLECTOR_END_HOUR: "24",
+    COLLECTOR_START_HOUR: "7",
+    COLLECTOR_END_HOUR: "23",
     COLLECTOR_ROUND_LIMIT: "1",
     COLLECTOR_MAX_PER_NICHE: "1",
     COLLECTOR_DEDUP_DAYS: "30",
@@ -218,10 +222,10 @@ test("collector configuration accepts every supported boundary", () => {
     COLLECTOR_SEND_DELAY_MS: "1000",
     ADMIN_WHATSAPP: "5543991724961",
   }), {
-    intervalMs: 5 * 60 * 1_000,
+    intervalMs: 1440 * 60 * 1_000,
     timeZone: "America/Sao_Paulo",
-    startHour: 0,
-    endHour: 24,
+    startHour: 7,
+    endHour: 23,
     roundLimit: 1,
     maxPerNiche: 1,
     dedupDays: 30,
@@ -234,9 +238,9 @@ test("collector configuration accepts every supported boundary", () => {
 test("collector configuration rejects invalid numeric time zone window path and administrator values", () => {
   const invalid = [
     ["COLLECTOR_INTERVAL_MINUTES", "4"], ["COLLECTOR_INTERVAL_MINUTES", "1441"], ["COLLECTOR_INTERVAL_MINUTES", "5.5"],
-    ["COLLECTOR_TIME_ZONE", "Mars/Olympus"],
-    ["COLLECTOR_START_HOUR", "-1"], ["COLLECTOR_START_HOUR", "24"],
-    ["COLLECTOR_END_HOUR", "0"], ["COLLECTOR_END_HOUR", "25"],
+    ["COLLECTOR_TIME_ZONE", "Mars/Olympus"], ["COLLECTOR_TIME_ZONE", "UTC"],
+    ["COLLECTOR_START_HOUR", "-1"], ["COLLECTOR_START_HOUR", "0"], ["COLLECTOR_START_HOUR", "8"], ["COLLECTOR_START_HOUR", "24"],
+    ["COLLECTOR_END_HOUR", "0"], ["COLLECTOR_END_HOUR", "22"], ["COLLECTOR_END_HOUR", "24"], ["COLLECTOR_END_HOUR", "25"],
     ["COLLECTOR_ROUND_LIMIT", "0"], ["COLLECTOR_ROUND_LIMIT", "11"],
     ["COLLECTOR_MAX_PER_NICHE", "0"], ["COLLECTOR_MAX_PER_NICHE", "3"],
     ["COLLECTOR_DEDUP_DAYS", "0"], ["COLLECTOR_DEDUP_DAYS", "31"],
@@ -248,6 +252,38 @@ test("collector configuration rejects invalid numeric time zone window path and 
     assert.throws(() => parseCollectorConfig({ [name]: value }), /configuration_required/, `${name}=${value}`);
   }
   assert.throws(() => parseCollectorConfig({ COLLECTOR_START_HOUR: "23", COLLECTOR_END_HOUR: "23" }), /configuration_required/);
+});
+
+test("administrator destination defaults safely and validates explicit values", () => {
+  assert.equal(parseCollectorConfig({}).adminWhatsapp, "5543991724961");
+  assert.equal(parseCollectorConfig({ ADMIN_WHATSAPP: "" }).adminWhatsapp, "5543991724961");
+  assert.equal(parseCollectorConfig({ ADMIN_WHATSAPP: "5511999999999" }).adminWhatsapp, "5511999999999");
+  for (const value of ["123456789", "1234567890123456", "55 11999999999"])
+    assert.throws(() => parseCollectorConfig({ ADMIN_WHATSAPP: value }), /configuration_required/);
+});
+
+test("session alert is disabled only for dry or disabled collectors and mandatory in live collection", () => {
+  const fail = () => assert.fail("dry or disabled mode must not construct a session alert");
+  assert.equal(createCollectorSessionAlert({ enabled: true, dryRun: true, SessionAlert: fail }), null);
+  assert.equal(createCollectorSessionAlert({ enabled: false, dryRun: false, SessionAlert: fail }), null);
+
+  const calls = [];
+  const result = createCollectorSessionAlert({
+    enabled: true,
+    dryRun: false,
+    SessionAlert: class {
+      constructor(options) { calls.push(options); this.ready = true; }
+    },
+    evolution: { name: "evolution" },
+    incidents: { name: "collector-store" },
+    destination: parseCollectorConfig({}).adminWhatsapp,
+  });
+  assert.equal(result.ready, true);
+  assert.deepEqual(calls, [{
+    evolution: { name: "evolution" },
+    incidents: { name: "collector-store" },
+    destination: "5543991724961",
+  }]);
 });
 
 test("collector pipeline injects the configured card schedule limits retention and abort signal", async () => {
@@ -313,11 +349,11 @@ test("server initializes the collector store before constructing its durable ses
   const server = await readFile(new URL("../server.mjs", import.meta.url), "utf8");
   const created = server.indexOf("new CollectorStore(pool)");
   const initialized = server.indexOf("await collectorStore.init()", created);
-  const alert = server.indexOf("new SessionAlert", initialized);
+  const alert = server.indexOf("createCollectorSessionAlert", initialized);
   assert.ok(created >= 0 && initialized > created && alert > initialized);
   assert.equal([...server.matchAll(/new CollectorStore\(pool\)/g)].length, 1);
   assert.equal([...server.matchAll(/await collectorStore\.init\(\)/g)].length, 1);
-  assert.match(server.slice(alert, alert + 220), /incidents:\s*collectorStore/);
+  assert.match(server.slice(alert, alert + 350), /incidents:\s*collectorStore/);
 });
 
 test("README documents the scheduled branded collector safety contract", async () => {

@@ -20,7 +20,11 @@ import { PublicOffersStore } from "./public-offers-store.mjs";
 import { publicSiteHandler } from "./public-site-handler.mjs";
 import { SessionAlert } from "./session-alert.mjs";
 import { composeOfferCard } from "./offer-card.mjs";
-import { createCollectorLoopOptions, parseCollectorConfig } from "./server-config.mjs";
+import {
+  createCollectorLoopOptions,
+  createCollectorSessionAlert,
+  parseCollectorConfig,
+} from "./server-config.mjs";
 async function main() {
   const env = process.env;
   const dryRun = env.DRY_RUN !== "false";
@@ -108,9 +112,14 @@ async function main() {
   await publicOffers.init();
   const collectorStore = collectorEnabled ? new CollectorStore(pool) : null;
   if (collectorStore) await collectorStore.init();
-  const sessionAlert = collectorStore && !dryRun && collectorConfig.adminWhatsapp
-    ? new SessionAlert({ evolution: clients.evolution, destination: collectorConfig.adminWhatsapp, incidents: collectorStore })
-    : null;
+  const sessionAlert = createCollectorSessionAlert({
+    enabled: collectorEnabled,
+    dryRun,
+    SessionAlert,
+    evolution: clients.evolution,
+    destination: collectorConfig.adminWhatsapp,
+    incidents: collectorStore,
+  });
   const site = publicSiteHandler({ store: publicOffers, siteConfig: { whatsAppGroupUrl: env.WHATSAPP_GROUP_URL ?? "" } });
   const server = createServer(createRequestHandler({ oauth: oauthHandler, site, webhook }));
   server.requestTimeout = 15000;
