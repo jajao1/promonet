@@ -40,7 +40,7 @@ const NON_FOOD_CONTEXTUAL_PHRASES = [
 const NON_FOOD_HEAD_SIGNALS = new Set([
   "moedor", "espremedor", "maquina", "porta", "fatiador", "adega", "espumador",
   "taca", "caneca", "jarra", "forma", "pote", "galheteiro", "cafeteira", "chaleira",
-  "panela", "acucareiro", "bebedouro", "alimentador", "capacete", "filtro",
+  "panela", "acucareiro", "bebedouro", "alimentador", "capacete", "filtro", "timer",
   "shampoo", "condicionador",
   "camiseta", "camisa", "vestido", "sapato", "tenis", "body", "blusa", "calca",
   "bermuda", "short", "saia", "casaco", "jaqueta", "moletom", "sandalia",
@@ -56,7 +56,9 @@ const FOOD_BRAND_SIGNALS = new Set([
   "pilao", "nescau", "fini", "ferrero", "rocher",
 ]);
 const PACKAGE_EVIDENCE = /(?:^| )(?:\d+x)?\d+(?:g|kg|ml|l)(?: |$)|(?:^| )(?:pacote|garrafa|caixa|lata|sache)(?:s)?(?: |$)/;
-const BUNDLE_CONTENT_SIGNALS = new Set(["com", "acompanha", "incluso", "inclusa"]);
+const PACKAGE_NOUN_SIGNALS = new Set(["pacote", "garrafa", "caixa", "lata", "sache"]);
+const EXPLICIT_BUNDLE_CONTENT_SIGNALS = new Set(["acompanha", "incluso", "inclusa", "inclui"]);
+const USAGE_RELATION_SIGNALS = new Set(["para", "de"]);
 const EARLY_HEAD_WINDOW = 5;
 
 function normalizedWords(value) {
@@ -96,10 +98,17 @@ function componentIsFood(component) {
   if (nonFoodContext) return false;
   if (nonFoodHeadIndex >= 0) {
     const foodIndex = words.findIndex(word => matchesSignal(word, FOOD_HEAD_SIGNALS));
-    const packagedFood = PACKAGE_EVIDENCE.test(text) && foodIndex > nonFoodHeadIndex &&
-      (words.some(word => FOOD_BRAND_SIGNALS.has(word)) ||
-       words.slice(nonFoodHeadIndex + 1, foodIndex).some(word => BUNDLE_CONTENT_SIGNALS.has(word)));
-    return packagedFood;
+    if (foodIndex <= nonFoodHeadIndex) return false;
+    const relationWords = words.slice(nonFoodHeadIndex + 1, foodIndex);
+    const interveningNonFoodHead = relationWords.some(word => matchesSignal(word, NON_FOOD_HEAD_SIGNALS));
+    const packagingHead = relationWords.some(word => matchesSignal(word, PACKAGE_NOUN_SIGNALS));
+    const explicitInclusion = EXPLICIT_BUNDLE_CONTENT_SIGNALS.has(words[foodIndex - 1]) ||
+      words.slice(foodIndex + 1, foodIndex + 3).some(word => EXPLICIT_BUNDLE_CONTENT_SIGNALS.has(word));
+    const usageTarget = USAGE_RELATION_SIGNALS.has(words[foodIndex - 1]) || interveningNonFoodHead;
+    if (usageTarget && !packagingHead && !explicitInclusion) return false;
+    const foodWords = words.slice(foodIndex);
+    return explicitInclusion || packagingHead || foodWords.some(word => FOOD_BRAND_SIGNALS.has(word)) ||
+      PACKAGE_EVIDENCE.test(foodWords.join(" "));
   }
 
   if (hasFoodPhrase) return true;

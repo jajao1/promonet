@@ -140,6 +140,13 @@ const componentFoodTitles=[
   "Kit camiseta + chocolate Bis",
 ];
 
+const applianceCapacityTitles=[
+  "Cafeteira elétrica com moedor de café integrado 1,5L",
+  "Cafeteira Oster com filtro permanente para café 1,2L",
+  "Cafeteira Electrolux com timer para café 1,2L",
+  "Cafeteira com jarra térmica para café 1L",
+];
+
 test("uses product heads and usage-target context for ambiguous food terms",()=>{
   for(const title of contextualNonFoodTitles)
     assert.equal(isFoodOrBeverage({title,categoryId:"MLB31447"}),false,title);
@@ -220,6 +227,32 @@ test("keeps usage-target components separate from packaged food components",()=>
   ];
   for(const [title,expected] of cases)
     assert.equal(isFoodOrBeverage({title,categoryId:"MLB31447"}),expected,title);
+});
+
+test("does not treat appliance reservoir capacity as packaged coffee",()=>{
+  for(const title of applianceCapacityTitles)
+    assert.equal(isFoodOrBeverage({title,categoryId:"MLB31447"}),false,title);
+  assert.equal(isFoodOrBeverage({title:"Cafeteira com filtro incluso para café 1,2L",categoryId:"MLB31447"}),false);
+  for(const title of [
+    "Cafeteira com café Pilão",
+    "Cafeteira acompanha café Pilão",
+    "Cafeteira com café incluso",
+    "Cafeteira com café 500g",
+    "Cafeteira com pacote de café 500g",
+    "Cafeteira com moedor + Café Pilão 500g",
+  ]) assert.equal(isFoodOrBeverage({title,categoryId:"MLB31447"}),true,title);
+});
+
+test("applies appliance capacity probes through eligibility and diversification",()=>{
+  const allowed=applianceCapacityTitles.map((title,index)=>({
+    ...item,title,itemId:`CAPACITY${index}`,nicheId:`capacity-${index}`,categoryId:"MLB31447",
+  }));
+  for(const offer of allowed)
+    assert.equal(isEligibleOffer(offer,{categoryId:"MLB31447",recentIds:new Set()}),true,offer.title);
+  assert.deepEqual(
+    diversifyOffers(allowed,{limit:10}).map(offer=>offer.itemId),
+    allowed.map(offer=>offer.itemId),
+  );
 });
 
 test("rejects food before selecting an otherwise valid ranked offer while allowing clothing",()=>{
