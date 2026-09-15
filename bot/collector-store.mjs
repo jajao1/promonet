@@ -104,10 +104,7 @@ CREATE TABLE IF NOT EXISTS promonet.offer_publications(
   UNIQUE(niche_id,item_id,published_day)
 );
 CREATE TABLE IF NOT EXISTS promonet.offer_identity_keys(
-  identity_key TEXT PRIMARY KEY CHECK(
-    identity_key ~ '^(item|url|product):[A-Za-z0-9._-]+$'
-    AND length(split_part(identity_key,':',2)) BETWEEN 1 AND 256
-  ),
+  identity_key TEXT PRIMARY KEY,
   reservation_id UUID,
   reserved_until TIMESTAMPTZ,
   published_at TIMESTAMPTZ,
@@ -115,6 +112,41 @@ CREATE TABLE IF NOT EXISTS promonet.offer_identity_keys(
   item_id TEXT,
   CHECK((reservation_id IS NULL) = (reserved_until IS NULL))
 );
+DO $identity_constraint_migration$
+BEGIN
+  IF EXISTS(
+    SELECT 1
+    FROM pg_constraint AS constraint_record
+    JOIN pg_class AS table_record ON table_record.oid=constraint_record.conrelid
+    JOIN pg_namespace AS schema_record ON schema_record.oid=table_record.relnamespace
+    WHERE schema_record.nspname='promonet'
+      AND table_record.relname='offer_identity_keys'
+      AND constraint_record.contype='c'
+      AND constraint_record.conname='offer_identity_keys_identity_key_check'
+      AND pg_get_constraintdef(constraint_record.oid) LIKE '%identity_key%'
+      AND pg_get_constraintdef(constraint_record.oid) LIKE '%item|url|product%'
+  ) THEN
+    ALTER TABLE promonet.offer_identity_keys
+      DROP CONSTRAINT offer_identity_keys_identity_key_check;
+  END IF;
+  IF NOT EXISTS(
+    SELECT 1
+    FROM pg_constraint AS constraint_record
+    JOIN pg_class AS table_record ON table_record.oid=constraint_record.conrelid
+    JOIN pg_namespace AS schema_record ON schema_record.oid=table_record.relnamespace
+    WHERE schema_record.nspname='promonet'
+      AND table_record.relname='offer_identity_keys'
+      AND constraint_record.contype='c'
+      AND constraint_record.conname='offer_identity_keys_identity_key_format_check'
+  ) THEN
+    ALTER TABLE promonet.offer_identity_keys
+      ADD CONSTRAINT offer_identity_keys_identity_key_format_check CHECK(
+        identity_key ~ '^(item|url|product):[A-Za-z0-9._-]+$'
+        AND length(split_part(identity_key,':',2)) BETWEEN 1 AND 256
+      );
+  END IF;
+END
+$identity_constraint_migration$;
 CREATE INDEX IF NOT EXISTS offer_identity_keys_published_at_idx
   ON promonet.offer_identity_keys(published_at) WHERE published_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS offer_identity_keys_reserved_until_idx

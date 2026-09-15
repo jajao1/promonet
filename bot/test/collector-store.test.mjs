@@ -246,6 +246,8 @@ test("creates durable collector schema and saves previews without secrets", asyn
   assert.match(schema, /offer_identity_keys[\s\S]*identity_key TEXT PRIMARY KEY/i);
   assert.doesNotMatch(schema, /\{1,256\}/);
   assert.match(schema, /length\(split_part\(identity_key,':',2\)\) BETWEEN 1 AND 256/i);
+  assert.match(schema, /CONSTRAINT offer_identity_keys_identity_key_format_check/i);
+  assert.match(schema, /offer_identity_keys_identity_key_check[\s\S]*DROP CONSTRAINT/i);
   assert.match(schema, /reserved_until TIMESTAMPTZ/i);
   assert.match(schema, /collector_rounds[\s\S]*metrics JSONB NOT NULL/i);
   assert.match(schema, /collector_incidents[\s\S]*active BOOLEAN NOT NULL DEFAULT false/i);
@@ -367,6 +369,7 @@ test("real PostgreSQL contention grants a fresh ten-minute lease after the lock 
     await pool.query("CREATE SCHEMA IF NOT EXISTS promonet");
     const store = new CollectorStore(pool);
     await store.init();
+    await store.init();
     await blocker.query("BEGIN");
     blockerTransaction = true;
     await blocker.query(
@@ -378,7 +381,16 @@ test("real PostgreSQL contention grants a fresh ten-minute lease after the lock 
     const reservation = store.reserveOffer([key], {
       nicheId: "integration", itemId: "MLB999999999", reservationId,
     }).finally(() => { settled = true; });
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    let waiting = false;
+    for (let attempt = 0; attempt < 40; attempt++) {
+      waiting = (await blocker.query(
+        "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND NOT granted) AS waiting",
+      )).rows[0].waiting;
+      if (waiting) break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.equal(waiting, true);
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
     assert.equal(settled, false);
     const releasedAt = (await blocker.query("SELECT clock_timestamp() AS released_at")).rows[0].released_at;
     await blocker.query("COMMIT");
@@ -394,6 +406,53 @@ test("real PostgreSQL contention grants a fresh ten-minute lease after the lock 
   } finally {
     if (blockerTransaction) await blocker.query("ROLLBACK");
     blocker.release();
+    await pool.end();
+  }
+});
+
+test("real PostgreSQL init migrates only the legacy identity format constraint", {
+  skip: !process.env.PROMONET_UPGRADE_TEST_DATABASE_URL,
+}, async () => {
+  const pool = new pg.Pool({ connectionString: process.env.PROMONET_UPGRADE_TEST_DATABASE_URL });
+  const key = `url:${createHash("sha256").update(randomUUID()).digest("hex")}`;
+  const reservationId = randomUUID();
+  try {
+    await pool.query("CREATE SCHEMA IF NOT EXISTS promonet");
+    await pool.query(`CREATE TABLE promonet.offer_identity_keys(
+      identity_key TEXT PRIMARY KEY CHECK(identity_key ~ '^(item|url|product):[A-Za-z0-9._-]{1,256}$'),
+      reservation_id UUID,
+      reserved_until TIMESTAMPTZ,
+      published_at TIMESTAMPTZ,
+      niche_id TEXT,
+      item_id TEXT,
+      CHECK((reservation_id IS NULL) = (reserved_until IS NULL)),
+      CONSTRAINT offer_identity_keys_unrelated_check CHECK(niche_id IS NULL OR length(niche_id)>0)
+    )`);
+    const before = await pool.query(
+      `SELECT conname FROM pg_constraint
+       WHERE conrelid='promonet.offer_identity_keys'::regclass AND contype='c'`,
+    );
+    assert.ok(before.rows.some((row) => row.conname === "offer_identity_keys_identity_key_check"));
+
+    const store = new CollectorStore(pool);
+    await store.init();
+    await store.init();
+    assert.equal(await store.reserveOffer([key], {
+      nicheId: "upgrade", itemId: "MLB999999998", reservationId,
+    }), true);
+    const after = await pool.query(
+      `SELECT conname,pg_get_constraintdef(oid) AS definition FROM pg_constraint
+       WHERE conrelid='promonet.offer_identity_keys'::regclass AND contype='c'`,
+    );
+    assert.equal(
+      after.rows.filter((row) => row.conname === "offer_identity_keys_identity_key_format_check").length,
+      1,
+    );
+    assert.ok(after.rows.some((row) => row.conname === "offer_identity_keys_unrelated_check"));
+    assert.ok(!after.rows.some((row) => row.conname === "offer_identity_keys_identity_key_check"));
+    assert.ok(!after.rows.some((row) => row.definition.includes("{1,256}")));
+    await store.releaseOffer(reservationId);
+  } finally {
     await pool.end();
   }
 });
