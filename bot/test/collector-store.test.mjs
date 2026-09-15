@@ -407,6 +407,42 @@ test("creates durable collector schema and saves previews without secrets", asyn
   assert.doesNotMatch(JSON.stringify(calls.map(({ args }) => args)), /access.?token|cookie|csrf|secret/i);
 });
 
+test("initialization backfills recent historical publications into every dedup identity", async () => {
+  const publishedAt = new Date("2026-09-15T18:00:00.000Z");
+  const calls = [];
+  const db = { query: async (sql, args = []) => {
+    calls.push({ sql, args });
+    if (/SELECT DISTINCT ON \(publication\.niche_id,publication\.item_id\)/i.test(sql)) {
+      return { rows: [{
+        niche_id: "sneakers",
+        item_id: "MLB27154049",
+        title: "Tenis Olympikus Dynamic Masculino",
+        product_url: "https://produto.mercadolivre.com.br/MLB-27154049-tenis",
+        published_at: publishedAt,
+      }] };
+    }
+    return { rows: [], rowCount: 0 };
+  } };
+
+  await new CollectorStore(db).init();
+
+  const select = calls.find(({ sql }) => /SELECT DISTINCT ON \(publication\.niche_id,publication\.item_id\)/i.test(sql));
+  const insert = calls.find(({ sql }) => /INSERT INTO promonet\.offer_identity_keys/i.test(sql) && /unnest/i.test(sql));
+  assert.ok(select);
+  assert.deepEqual(select.args, [7]);
+  assert.match(select.sql, /publication\.published_at >= now\(\) - \(\$1 \* interval '1 day'\)/i);
+  assert.ok(insert);
+  assert.equal(insert.args[0].length, 3);
+  assert.ok(insert.args[0].includes("item:MLB27154049"));
+  assert.ok(insert.args[0].some((key) => /^url:[a-f0-9]{64}$/.test(key)));
+  assert.ok(insert.args[0].some((key) => /^product:[a-f0-9]{64}$/.test(key)));
+  assert.deepEqual(insert.args[1], ["sneakers", "sneakers", "sneakers"]);
+  assert.deepEqual(insert.args[2], ["MLB27154049", "MLB27154049", "MLB27154049"]);
+  assert.deepEqual(insert.args[3], [publishedAt, publishedAt, publishedAt]);
+  assert.match(insert.sql, /ON CONFLICT\(identity_key\) DO UPDATE/i);
+  assert.match(insert.sql, /GREATEST/i);
+});
+
 test("recent item ids remain global for seven days and publication is recorded", async () => {
   const calls = [];
   const db = { query: async (sql, args) => {

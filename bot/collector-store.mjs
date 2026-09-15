@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { offerIdentities } from "./product-fingerprint.mjs";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const IDENTITY_KEY = /^(?:item|url|product):[A-Za-z0-9._-]{1,256}$/;
@@ -214,6 +215,81 @@ $incident_claim_migration$;
 CREATE INDEX IF NOT EXISTS collector_incidents_active_idx
   ON promonet.collector_incidents(incident_key) WHERE active;
 `);
+    await this.backfillRecentIdentityKeys();
+  }
+
+  async backfillRecentIdentityKeys(retentionDays = 7) {
+    if (!Number.isInteger(retentionDays) || retentionDays < 1 || retentionDays > 30) {
+      throw Error("invalid_retention_days");
+    }
+    const history = await this.db.query(
+      `SELECT DISTINCT ON (publication.niche_id,publication.item_id)
+         publication.niche_id,publication.item_id,preview.title,preview.product_url,
+         publication.published_at
+       FROM promonet.offer_publications AS publication
+       JOIN promonet.offer_previews AS preview
+         ON preview.niche_id=publication.niche_id AND preview.item_id=publication.item_id
+       WHERE publication.published_at >= now() - ($1 * interval '1 day')
+       ORDER BY publication.niche_id,publication.item_id,publication.published_at DESC`,
+      [retentionDays],
+    );
+
+    const identities = new Map();
+    for (const row of history.rows) {
+      if (
+        typeof row?.niche_id !== "string" || !row.niche_id ||
+        typeof row?.item_id !== "string" || !/^MLB\d+$/i.test(row.item_id) ||
+        !(row.published_at instanceof Date) || !Number.isFinite(row.published_at.getTime())
+      ) continue;
+      let keys = [`item:${row.item_id.toUpperCase()}`];
+      try {
+        keys = offerIdentities({ itemId: row.item_id, title: row.title, permalink: row.product_url });
+      } catch {
+        // A legacy malformed URL must not prevent the exact item from being suppressed.
+      }
+      for (const identityKey of keys) {
+        const current = identities.get(identityKey);
+        if (!current || current.publishedAt < row.published_at) {
+          identities.set(identityKey, {
+            nicheId: row.niche_id,
+            itemId: row.item_id.toUpperCase(),
+            publishedAt: row.published_at,
+          });
+        }
+      }
+    }
+    if (!identities.size) return 0;
+
+    const entries = [...identities.entries()];
+    const result = await this.db.query(
+      `INSERT INTO promonet.offer_identity_keys(
+         identity_key,niche_id,item_id,published_at,reservation_id,reserved_until,review_until
+       )
+       SELECT identity_key,niche_id,item_id,published_at,NULL,NULL,NULL
+       FROM unnest($1::text[],$2::text[],$3::text[],$4::timestamptz[])
+         AS history(identity_key,niche_id,item_id,published_at)
+       ON CONFLICT(identity_key) DO UPDATE SET
+         published_at=GREATEST(
+           COALESCE(promonet.offer_identity_keys.published_at,EXCLUDED.published_at),
+           EXCLUDED.published_at
+         ),
+         niche_id=CASE
+           WHEN promonet.offer_identity_keys.published_at IS NULL
+             OR promonet.offer_identity_keys.published_at<=EXCLUDED.published_at
+           THEN EXCLUDED.niche_id ELSE promonet.offer_identity_keys.niche_id END,
+         item_id=CASE
+           WHEN promonet.offer_identity_keys.published_at IS NULL
+             OR promonet.offer_identity_keys.published_at<=EXCLUDED.published_at
+           THEN EXCLUDED.item_id ELSE promonet.offer_identity_keys.item_id END,
+         reservation_id=NULL,reserved_until=NULL,review_until=NULL`,
+      [
+        entries.map(([identityKey]) => identityKey),
+        entries.map(([, value]) => value.nicheId),
+        entries.map(([, value]) => value.itemId),
+        entries.map(([, value]) => value.publishedAt),
+      ],
+    );
+    return result.rowCount ?? identities.size;
   }
 
   async claimDueNiches(niches) {
