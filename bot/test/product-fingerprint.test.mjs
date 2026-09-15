@@ -124,6 +124,15 @@ test("rejects product-looking paths on search arbitrary and host-mismatched rout
   }
 });
 
+test("rejects item identifiers nested under unrelated allowed-host routes", () => {
+  for (const value of [
+    "https://produto.mercadolivre.com.br/minha-conta/MLB-123-item",
+    "https://www.mercadolivre.com.br/minha-conta/MLB-123-item",
+  ]) {
+    assert.throws(() => canonicalProductUrl(value), /ineligible_url/);
+  }
+});
+
 test("emits uppercase item and SHA-256 canonical URL and product identities", () => {
   const offer = {
     itemId: "mlb123",

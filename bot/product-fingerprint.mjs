@@ -54,8 +54,8 @@ export function canonicalProductUrl(value) {
     ineligible();
   }
 
-  const itemPath = /(?:^|\/)MLB-\d+(?:[-_/]|$)/i.test(url.pathname);
-  const catalogPath = /(?:^|\/)p\/MLB\d+(?:\/|$)/i.test(url.pathname);
+  const itemPath = /^\/MLB-\d+(?:[-_][^/]*)?\/?$/i.test(url.pathname);
+  const catalogPath = /^\/(?:[^/]+\/)?p\/MLB\d+\/?$/i.test(url.pathname);
   const itemRoute = url.hostname === "produto.mercadolivre.com.br" && itemPath;
   const websiteRoute = url.hostname === "www.mercadolivre.com.br" && (itemPath || catalogPath);
   if (
