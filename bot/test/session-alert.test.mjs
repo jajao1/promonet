@@ -7,45 +7,62 @@ class PersistentIncidents {
     this.active = false;
     this.notified = false;
     this.claimUntil = null;
+    this.claimToken = null;
     this.now = 0;
     this.failNextMark = false;
-    this.failNextResolve = false;
+    this.failNextAbandon = false;
     this.begun = [];
     this.marked = [];
+    this.abandoned = [];
     this.resolved = [];
   }
 
-  async beginIncident(key) {
-    this.begun.push(key);
-    if (this.active && (this.notified || this.claimUntil > this.now)) return false;
+  async beginIncident(key, claimToken) {
+    this.begun.push({ key, claimToken });
+    if (this.active && (this.notified || this.claimUntil > this.now)) return null;
     this.active = true;
     this.notified = false;
     this.claimUntil = this.now + 300;
-    return true;
+    this.claimToken = claimToken;
+    return claimToken;
   }
 
-  async markIncidentNotified(key) {
-    this.marked.push(key);
+  async markIncidentNotified(key, claimToken) {
+    this.marked.push({ key, claimToken });
     if (this.failNextMark) {
       this.failNextMark = false;
       throw Error("incident_acknowledgement_failed");
     }
+    if (!this.active || this.claimToken !== claimToken) return false;
     this.notified = true;
     this.claimUntil = null;
+    this.claimToken = null;
+    return true;
+  }
+
+  async abandonIncident(key, claimToken) {
+    this.abandoned.push({ key, claimToken });
+    if (this.failNextAbandon) {
+      this.failNextAbandon = false;
+      throw Error("incident_cleanup_failed");
+    }
+    if (!this.active || this.claimToken !== claimToken) return false;
+    this.active = false;
+    this.claimUntil = null;
+    this.claimToken = null;
+    return true;
   }
 
   async resolveIncident(key) {
     this.resolved.push(key);
-    if (this.failNextResolve) {
-      this.failNextResolve = false;
-      throw Error("incident_cleanup_failed");
-    }
     this.active = false;
     this.claimUntil = null;
+    this.claimToken = null;
   }
 }
 
 const destination = "5543991724961";
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function createAlert({ incidents = new PersistentIncidents(), send = async () => {} } = {}) {
   return {
@@ -72,8 +89,10 @@ test("two alert instances notify the configured WhatsApp once per persisted inci
   await first.restored();
   assert.equal(await second.required(), true);
   assert.equal(sends.length, 2);
-  assert.deepEqual(incidents.begun, ["meli_session", "meli_session", "meli_session"]);
-  assert.deepEqual(incidents.marked, ["meli_session", "meli_session"]);
+  assert.deepEqual(incidents.begun.map(({ key }) => key), ["meli_session", "meli_session", "meli_session"]);
+  assert.ok(incidents.begun.every(({ claimToken }) => uuid.test(claimToken)));
+  assert.equal(new Set(incidents.begun.map(({ claimToken }) => claimToken)).size, 3);
+  assert.deepEqual(incidents.marked, [incidents.begun[0], incidents.begun[2]]);
   assert.deepEqual(incidents.resolved, ["meli_session"]);
 });
 
@@ -84,7 +103,7 @@ test("concurrent required calls claim one incident and send once", async () => {
 
   assert.deepEqual(await Promise.all([alert.required(), alert.required()]), [true, false]);
   assert.equal(sends.length, 1);
-  assert.deepEqual(incidents.marked, ["meli_session"]);
+  assert.deepEqual(incidents.marked, [incidents.begun[0]]);
 });
 
 test("a failed notification releases the incident and rethrows the original send error without logging", async () => {
@@ -115,15 +134,16 @@ test("a failed notification releases the incident and rethrows the original send
     console.error = originalError;
   }
   assert.deepEqual(logged, []);
-  assert.deepEqual(incidents.resolved, ["meli_session"]);
+  assert.deepEqual(incidents.abandoned, [incidents.begun[0]]);
+  assert.deepEqual(incidents.resolved, []);
   assert.equal(await alert.required(), true);
   assert.equal(attempts, 2);
-  assert.deepEqual(incidents.marked, ["meli_session"]);
+  assert.deepEqual(incidents.marked, [incidents.begun[1]]);
 });
 
 test("a failed cleanup remains retryable after the unacknowledged claim lease", async () => {
   const incidents = new PersistentIncidents();
-  incidents.failNextResolve = true;
+  incidents.failNextAbandon = true;
   const sendError = Error("evolution_send_failed");
   let attempts = 0;
   const alert = createAlert({
@@ -139,7 +159,7 @@ test("a failed cleanup remains retryable after the unacknowledged claim lease", 
   incidents.now = incidents.claimUntil + 1;
   assert.equal(await alert.required(), true);
   assert.equal(attempts, 2);
-  assert.deepEqual(incidents.marked, ["meli_session"]);
+  assert.deepEqual(incidents.marked, [incidents.begun[2]]);
 });
 
 test("an acknowledgement persistence failure preserves the claim lease", async () => {
@@ -149,7 +169,7 @@ test("an acknowledgement persistence failure preserves the claim lease", async (
   const alert = createAlert({ incidents, send: async (job) => sends.push(job) }).alert;
 
   await assert.rejects(alert.required(), /incident_acknowledgement_failed/);
-  assert.deepEqual(incidents.resolved, []);
+  assert.deepEqual(incidents.abandoned, []);
   assert.equal(await alert.required(), false);
   incidents.now = incidents.claimUntil + 1;
   assert.equal(await alert.required(), true);
@@ -161,8 +181,9 @@ test("restored awaits the idempotent persistent resolution", async () => {
   const resolution = new Promise((resolve) => { release = resolve; });
   let finished = false;
   const incidents = {
-    beginIncident: async () => true,
+    beginIncident: async (_key, claimToken) => claimToken,
     markIncidentNotified: async () => {},
+    abandonIncident: async () => {},
     resolveIncident: async (key) => {
       assert.equal(key, "meli_session");
       await resolution;
@@ -196,9 +217,10 @@ test("rejects invalid dependencies and administrative destination", () => {
   for (const incidents of [
     undefined,
     {},
-    { beginIncident: async () => true, resolveIncident: async () => {} },
-    { beginIncident: async () => true, markIncidentNotified: async () => {} },
-    { markIncidentNotified: async () => {}, resolveIncident: async () => {} },
+    { beginIncident: async () => true, markIncidentNotified: async () => {}, resolveIncident: async () => {} },
+    { beginIncident: async () => true, abandonIncident: async () => {}, resolveIncident: async () => {} },
+    { markIncidentNotified: async () => {}, abandonIncident: async () => {}, resolveIncident: async () => {} },
+    { beginIncident: async () => true, markIncidentNotified: async () => {}, abandonIncident: async () => {} },
   ]) {
     assert.throws(
       () => new SessionAlert({ destination, evolution: validEvolution, incidents }),

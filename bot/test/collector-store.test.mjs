@@ -7,6 +7,8 @@ import { CollectorStore } from "../collector-store.mjs";
 const RESERVATION_A = "11111111-1111-4111-8111-111111111111";
 const RESERVATION_B = "22222222-2222-4222-8222-222222222222";
 const ROUND_ID = "33333333-3333-4333-8333-333333333333";
+const CLAIM_A = "44444444-4444-4444-8444-444444444444";
+const CLAIM_B = "55555555-5555-4555-8555-555555555555";
 const ITEM_1 = "item:MLB1";
 const ITEM_2 = "item:MLB2";
 const PRODUCT = `product:${"a".repeat(64)}`;
@@ -20,9 +22,10 @@ function deferred() {
 }
 
 class BehavioralDatabase {
-  constructor(rows = []) {
+  constructor(rows = [], { incidents = [], hasClaimTokenColumn = true } = {}) {
     this.identities = new Map(rows.map((row) => [row.identity_key, { ...row }]));
-    this.incidents = new Map();
+    this.incidents = new Map(incidents.map((row) => [row.incident_key, { ...row }]));
+    this.hasClaimTokenColumn = hasClaimTokenColumn;
     this.rounds = [];
     this.calls = [];
     this.locks = new Map();
@@ -52,6 +55,21 @@ class BehavioralDatabase {
 
   async query(sql, args = []) {
     this.calls.push({ sql, args, client: false });
+    if (/\$incident_claim_migration\$/i.test(sql)) {
+      if (!this.hasClaimTokenColumn) {
+        this.hasClaimTokenColumn = true;
+        for (const [key, current] of this.incidents) {
+          if (current.active) this.incidents.set(key, {
+            ...current,
+            active: false,
+            notified_at: null,
+            claim_until: null,
+            claim_token: null,
+          });
+        }
+      }
+      return { rows: [], rowCount: 0 };
+    }
     if (/SELECT DISTINCT identity_key/i.test(sql)) {
       const cutoff = Date.now() - args[0] * 24 * 60 * 60 * 1_000;
       return {
@@ -99,27 +117,35 @@ class BehavioralDatabase {
       this.incidents.set(args[0], {
         active: true,
         notified_at: null,
-        claim_until: new Date(now + args[1] * 1_000),
+        claim_until: new Date(now + args[2] * 1_000),
+        claim_token: args[1],
       });
-      return { rows: [{ incident_key: args[0] }], rowCount: 1 };
+      return { rows: [{ claim_token: args[1] }], rowCount: 1 };
     }
     if (/UPDATE promonet\.collector_incidents[\s\S]*notified_at=now\(\)/i.test(sql)) {
       const current = this.incidents.get(args[0]);
-      if (current?.active && !current.notified_at) {
+      if (current?.active && !current.notified_at && current.claim_token === args[1]) {
         this.incidents.set(args[0], {
           ...current,
           notified_at: new Date(this.now),
           claim_until: null,
+          claim_token: null,
         });
       }
-      return { rows: [], rowCount: current?.active && !current.notified_at ? 1 : 0 };
+      return { rows: [], rowCount: current?.active && !current.notified_at && current.claim_token === args[1] ? 1 : 0 };
     }
     if (/UPDATE promonet\.collector_incidents[\s\S]*active=false/i.test(sql)) {
       const current = this.incidents.get(args[0]);
-      if (current && (!/AND active=true/i.test(sql) || current.active)) {
-        this.incidents.set(args[0], { ...current, active: false, claim_until: null });
+      const ownsClaim = !/claim_token=\$2/i.test(sql) || current?.claim_token === args[1];
+      if (current && ownsClaim) {
+        this.incidents.set(args[0], {
+          ...current,
+          active: false,
+          claim_until: null,
+          claim_token: null,
+        });
       }
-      return { rows: [], rowCount: current?.active ? 1 : 0 };
+      return { rows: [], rowCount: current?.active && ownsClaim ? 1 : 0 };
     }
     return { rows: [], rowCount: 0 };
   }
@@ -273,9 +299,12 @@ test("creates durable collector schema and saves previews without secrets", asyn
   assert.match(schema, /collector_rounds[\s\S]*metrics JSONB NOT NULL/i);
   assert.match(schema, /collector_incidents[\s\S]*active BOOLEAN NOT NULL DEFAULT false/i);
   assert.match(schema, /collector_incidents[\s\S]*claim_until TIMESTAMPTZ/i);
-  assert.match(schema, /ALTER TABLE promonet\.collector_incidents ADD COLUMN IF NOT EXISTS claim_until/i);
+  assert.match(schema, /collector_incidents[\s\S]*claim_token UUID/i);
+  assert.match(schema, /\$incident_claim_migration\$[\s\S]*ADD COLUMN IF NOT EXISTS claim_until/i);
+  assert.match(schema, /\$incident_claim_migration\$[\s\S]*ADD COLUMN IF NOT EXISTS claim_token/i);
+  assert.match(schema, /\$incident_claim_migration\$[\s\S]*UPDATE promonet\.collector_incidents[\s\S]*active=false[\s\S]*notified_at=NULL/i);
   assert.match(schema, /CREATE INDEX IF NOT EXISTS[\s\S]*published_at/i);
-  assert.doesNotMatch(JSON.stringify(calls), /token|cookie|csrf/i);
+  assert.doesNotMatch(JSON.stringify(calls.map(({ args }) => args)), /access.?token|cookie|csrf|secret/i);
 });
 
 test("recent item ids remain global for seven days and publication is recorded", async () => {
@@ -605,33 +634,65 @@ test("incident claims are concurrent, leased, and reclaimable after an unacknowl
   const first = new CollectorStore(db);
   const second = new CollectorStore(db);
   assert.deepEqual(
-    await Promise.all([first.beginIncident("meli_session"), second.beginIncident("meli_session")]),
-    [true, false],
+    await Promise.all([
+      first.beginIncident("meli_session", CLAIM_A),
+      second.beginIncident("meli_session", CLAIM_B),
+    ]),
+    [CLAIM_A, null],
   );
   const claim = db.incidents.get("meli_session");
   assert.equal(claim.active, true);
   assert.equal(claim.notified_at, null);
+  assert.equal(claim.claim_token, CLAIM_A);
   assert.ok(claim.claim_until.getTime() > db.now.getTime());
-  assert.equal(await second.beginIncident("meli_session"), false);
+  assert.equal(await second.beginIncident("meli_session", CLAIM_B), null);
   db.now = new Date(claim.claim_until.getTime() + 1);
-  assert.equal(await second.beginIncident("meli_session"), true);
+  assert.equal(await second.beginIncident("meli_session", CLAIM_B), CLAIM_B);
+  assert.equal(db.incidents.get("meli_session").claim_token, CLAIM_B);
 });
 
 test("acknowledged incidents stay suppressed until restoration", async () => {
   const db = new BehavioralDatabase();
   const first = new CollectorStore(db);
   const second = new CollectorStore(db);
-  assert.equal(await first.beginIncident("meli_session"), true);
-  await first.markIncidentNotified("meli_session");
+  assert.equal(await first.beginIncident("meli_session", CLAIM_A), CLAIM_A);
+  assert.equal(await first.markIncidentNotified("meli_session", CLAIM_A), true);
   const acknowledged = db.incidents.get("meli_session");
   assert.ok(acknowledged.notified_at instanceof Date);
   assert.equal(acknowledged.claim_until, null);
+  assert.equal(acknowledged.claim_token, null);
   db.now = new Date(db.now.getTime() + 24 * 60 * 60 * 1_000);
-  assert.equal(await second.beginIncident("meli_session"), false);
+  assert.equal(await second.beginIncident("meli_session", CLAIM_B), null);
   await first.resolveIncident("meli_session");
   await first.resolveIncident("meli_session");
   assert.equal(db.incidents.get("meli_session").claim_until, null);
-  assert.equal(await second.beginIncident("meli_session"), true);
+  assert.equal(await second.beginIncident("meli_session", CLAIM_B), CLAIM_B);
+});
+
+test("stale claimants cannot acknowledge or abandon a reclaimed incident", async () => {
+  const db = new BehavioralDatabase();
+  const store = new CollectorStore(db);
+  assert.equal(await store.beginIncident("meli_session", CLAIM_A), CLAIM_A);
+  db.now = new Date(db.incidents.get("meli_session").claim_until.getTime() + 1);
+  assert.equal(await store.beginIncident("meli_session", CLAIM_B), CLAIM_B);
+  assert.equal(await store.markIncidentNotified("meli_session", CLAIM_A), false);
+  assert.equal(db.incidents.get("meli_session").claim_token, CLAIM_B);
+  assert.equal(await store.abandonIncident("meli_session", CLAIM_A), false);
+  assert.equal(db.incidents.get("meli_session").claim_token, CLAIM_B);
+  assert.equal(db.incidents.get("meli_session").active, true);
+  assert.equal(await store.markIncidentNotified("meli_session", CLAIM_B), true);
+  assert.ok(db.incidents.get("meli_session").notified_at instanceof Date);
+});
+
+test("the current claimant alone can abandon an unacknowledged incident", async () => {
+  const db = new BehavioralDatabase();
+  const store = new CollectorStore(db);
+  assert.equal(await store.beginIncident("meli_session", CLAIM_A), CLAIM_A);
+  db.now = new Date(db.incidents.get("meli_session").claim_until.getTime() + 1);
+  assert.equal(await store.beginIncident("meli_session", CLAIM_B), CLAIM_B);
+  assert.equal(await store.abandonIncident("meli_session", CLAIM_A), false);
+  assert.equal(await store.abandonIncident("meli_session", CLAIM_B), true);
+  assert.equal(db.incidents.get("meli_session").active, false);
 });
 
 test("restoration clears a stale claim even when the incident is already inactive", async () => {
@@ -646,6 +707,34 @@ test("restoration clears a stale claim even when the incident is already inactiv
   assert.equal(db.incidents.get("meli_session").claim_until, null);
 });
 
+test("legacy incident migration resets once and preserves later acknowledged incidents", async () => {
+  const legacyNotification = new Date("2026-09-15T12:00:00.000Z");
+  const db = new BehavioralDatabase([], {
+    hasClaimTokenColumn: false,
+    incidents: [{
+      incident_key: "meli_session",
+      active: true,
+      notified_at: legacyNotification,
+      claim_until: null,
+    }],
+  });
+  const store = new CollectorStore(db);
+  await store.init();
+  assert.deepEqual(db.incidents.get("meli_session"), {
+    incident_key: "meli_session",
+    active: false,
+    notified_at: null,
+    claim_until: null,
+    claim_token: null,
+  });
+  assert.equal(await store.beginIncident("meli_session", CLAIM_A), CLAIM_A);
+  assert.equal(await store.markIncidentNotified("meli_session", CLAIM_A), true);
+  const acknowledgedAt = db.incidents.get("meli_session").notified_at;
+  await store.init();
+  assert.equal(db.incidents.get("meli_session").active, true);
+  assert.equal(db.incidents.get("meli_session").notified_at, acknowledgedAt);
+});
+
 test("real PostgreSQL incident leases recover crashes and suppress acknowledged notifications", {
   skip: !process.env.PROMONET_TEST_DATABASE_URL,
 }, async () => {
@@ -655,19 +744,68 @@ test("real PostgreSQL incident leases recover crashes and suppress acknowledged 
     await pool.query("CREATE SCHEMA IF NOT EXISTS promonet");
     const store = new CollectorStore(pool);
     await store.init();
-    assert.equal(await store.beginIncident(key), true);
-    assert.equal(await store.beginIncident(key), false);
+    assert.equal(await store.beginIncident(key, CLAIM_A), CLAIM_A);
+    assert.equal(await store.beginIncident(key, CLAIM_B), null);
     await pool.query(
       "UPDATE promonet.collector_incidents SET claim_until=now()-interval '1 second' WHERE incident_key=$1",
       [key],
     );
-    assert.equal(await store.beginIncident(key), true);
-    await store.markIncidentNotified(key);
-    assert.equal(await store.beginIncident(key), false);
+    assert.equal(await store.beginIncident(key, CLAIM_B), CLAIM_B);
+    assert.equal(await store.markIncidentNotified(key, CLAIM_B), true);
+    assert.equal(await store.beginIncident(key, CLAIM_A), null);
     await store.resolveIncident(key);
-    assert.equal(await store.beginIncident(key), true);
+    assert.equal(await store.beginIncident(key, CLAIM_A), CLAIM_A);
   } finally {
     await pool.query("DELETE FROM promonet.collector_incidents WHERE incident_key=$1", [key]);
+    await pool.end();
+  }
+});
+
+test("real PostgreSQL migration resets legacy incidents once", {
+  skip: !process.env.PROMONET_UPGRADE_TEST_DATABASE_URL,
+}, async () => {
+  const pool = new pg.Pool({ connectionString: process.env.PROMONET_UPGRADE_TEST_DATABASE_URL });
+  const client = await pool.connect();
+  let transactionOpen = false;
+  try {
+    await client.query("BEGIN");
+    transactionOpen = true;
+    await client.query("CREATE SCHEMA IF NOT EXISTS promonet");
+    await client.query("DROP TABLE IF EXISTS promonet.collector_incidents");
+    await client.query(`CREATE TABLE promonet.collector_incidents(
+      incident_key TEXT PRIMARY KEY,
+      active BOOLEAN NOT NULL DEFAULT false,
+      notified_at TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`);
+    await client.query(
+      "INSERT INTO promonet.collector_incidents(incident_key,active,notified_at) VALUES($1,true,now())",
+      ["meli_session"],
+    );
+    const store = new CollectorStore(client);
+    await store.init();
+    const migrated = (await client.query(
+      "SELECT active,notified_at,claim_until,claim_token FROM promonet.collector_incidents WHERE incident_key=$1",
+      ["meli_session"],
+    )).rows[0];
+    assert.deepEqual(migrated, {
+      active: false,
+      notified_at: null,
+      claim_until: null,
+      claim_token: null,
+    });
+    assert.equal(await store.beginIncident("meli_session", CLAIM_A), CLAIM_A);
+    assert.equal(await store.markIncidentNotified("meli_session", CLAIM_A), true);
+    await store.init();
+    const acknowledged = (await client.query(
+      "SELECT active,notified_at FROM promonet.collector_incidents WHERE incident_key=$1",
+      ["meli_session"],
+    )).rows[0];
+    assert.equal(acknowledged.active, true);
+    assert.ok(acknowledged.notified_at instanceof Date);
+  } finally {
+    if (transactionOpen) await client.query("ROLLBACK");
+    client.release();
     await pool.end();
   }
 });

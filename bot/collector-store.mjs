@@ -167,9 +167,29 @@ CREATE TABLE IF NOT EXISTS promonet.collector_incidents(
   active BOOLEAN NOT NULL DEFAULT false,
   notified_at TIMESTAMPTZ,
   claim_until TIMESTAMPTZ,
+  claim_token UUID,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-ALTER TABLE promonet.collector_incidents ADD COLUMN IF NOT EXISTS claim_until TIMESTAMPTZ;
+DO $incident_claim_migration$
+DECLARE
+  claim_token_missing BOOLEAN;
+BEGIN
+  SELECT NOT EXISTS(
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema='promonet'
+      AND table_name='collector_incidents'
+      AND column_name='claim_token'
+  ) INTO claim_token_missing;
+  ALTER TABLE promonet.collector_incidents ADD COLUMN IF NOT EXISTS claim_until TIMESTAMPTZ;
+  ALTER TABLE promonet.collector_incidents ADD COLUMN IF NOT EXISTS claim_token UUID;
+  IF claim_token_missing THEN
+    UPDATE promonet.collector_incidents
+    SET active=false,notified_at=NULL,claim_until=NULL,claim_token=NULL,updated_at=now()
+    WHERE active=true;
+  END IF;
+END
+$incident_claim_migration$;
 CREATE INDEX IF NOT EXISTS collector_incidents_active_idx
   ON promonet.collector_incidents(incident_key) WHERE active;
 `);
@@ -371,17 +391,19 @@ CREATE INDEX IF NOT EXISTS collector_incidents_active_idx
     );
   }
 
-  async beginIncident(key) {
+  async beginIncident(key, claimToken) {
     requireIncidentKey(key);
+    requireUuid(claimToken, "incident_claim_token");
     const result = await this.db.query(
       `INSERT INTO promonet.collector_incidents(
-         incident_key,active,notified_at,claim_until,updated_at
+         incident_key,active,notified_at,claim_until,claim_token,updated_at
        )
-       VALUES($1,true,NULL,now()+($2 * interval '1 second'),now())
+       VALUES($1,true,NULL,now()+($3 * interval '1 second'),$2::uuid,now())
        ON CONFLICT(incident_key) DO UPDATE SET
          active=true,
          notified_at=NULL,
-         claim_until=now()+($2 * interval '1 second'),
+         claim_until=now()+($3 * interval '1 second'),
+         claim_token=$2::uuid,
          updated_at=now()
        WHERE promonet.collector_incidents.active=false
           OR (
@@ -392,27 +414,47 @@ CREATE INDEX IF NOT EXISTS collector_incidents_active_idx
               OR promonet.collector_incidents.claim_until<=now()
             )
           )
-       RETURNING incident_key`,
-      [key, INCIDENT_CLAIM_SECONDS],
+       RETURNING claim_token`,
+      [key, claimToken, INCIDENT_CLAIM_SECONDS],
     );
-    return result.rows.length > 0;
+    return result.rows[0]?.claim_token ?? null;
   }
 
-  async markIncidentNotified(key) {
+  async markIncidentNotified(key, claimToken) {
     requireIncidentKey(key);
-    await this.db.query(
+    requireUuid(claimToken, "incident_claim_token");
+    const result = await this.db.query(
       `UPDATE promonet.collector_incidents
-       SET notified_at=now(),claim_until=NULL,updated_at=now()
-       WHERE incident_key=$1 AND active=true AND notified_at IS NULL`,
-      [key],
+       SET notified_at=now(),claim_until=NULL,claim_token=NULL,updated_at=now()
+       WHERE incident_key=$1
+         AND active=true
+         AND notified_at IS NULL
+         AND claim_token=$2::uuid`,
+      [key, claimToken],
     );
+    return result.rowCount > 0;
+  }
+
+  async abandonIncident(key, claimToken) {
+    requireIncidentKey(key);
+    requireUuid(claimToken, "incident_claim_token");
+    const result = await this.db.query(
+      `UPDATE promonet.collector_incidents
+       SET active=false,notified_at=NULL,claim_until=NULL,claim_token=NULL,updated_at=now()
+       WHERE incident_key=$1
+         AND active=true
+         AND notified_at IS NULL
+         AND claim_token=$2::uuid`,
+      [key, claimToken],
+    );
+    return result.rowCount > 0;
   }
 
   async resolveIncident(key) {
     requireIncidentKey(key);
     await this.db.query(
       `UPDATE promonet.collector_incidents
-       SET active=false,claim_until=NULL,updated_at=now()
+       SET active=false,claim_until=NULL,claim_token=NULL,updated_at=now()
        WHERE incident_key=$1`,
       [key],
     );

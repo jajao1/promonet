@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 export class SessionAlert {
   constructor({ evolution, destination, incidents }) {
     if (!/^\d{10,15}$/.test(destination ?? "")) throw Error("admin_whatsapp_invalid");
@@ -5,6 +7,7 @@ export class SessionAlert {
     if (
       typeof incidents?.beginIncident !== "function" ||
       typeof incidents?.markIncidentNotified !== "function" ||
+      typeof incidents?.abandonIncident !== "function" ||
       typeof incidents?.resolveIncident !== "function"
     ) throw Error("session_incidents_invalid");
     this.evolution = evolution;
@@ -13,7 +16,8 @@ export class SessionAlert {
   }
 
   async required() {
-    if (!await this.incidents.beginIncident("meli_session")) return false;
+    const claimToken = await this.incidents.beginIncident("meli_session", randomUUID());
+    if (!claimToken) return false;
     try {
       await this.evolution.send({
         destination: this.destination,
@@ -22,13 +26,13 @@ export class SessionAlert {
       });
     } catch (error) {
       try {
-        await this.incidents.resolveIncident("meli_session");
+        await this.incidents.abandonIncident("meli_session", claimToken);
       } catch {
         // The notification failure remains authoritative and must not expose storage details.
       }
       throw error;
     }
-    await this.incidents.markIncidentNotified("meli_session");
+    await this.incidents.markIncidentNotified("meli_session", claimToken);
     return true;
   }
 
