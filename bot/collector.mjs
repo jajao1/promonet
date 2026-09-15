@@ -54,13 +54,13 @@ async function restoreSessionIncident(sessionAlert, logger, context) {
   }
 }
 
-async function quarantineReservation(store, reservationId, logger, context) {
+async function quarantineReservation(store, reservationId, logger, context, logFailure = true) {
   try {
     if (await store.quarantineOffer(reservationId)) return true;
   } catch {
     // The pre-delivery hold remains active even if conversion to review state fails.
   }
-  fixedLog(logger, "error", eventPayload("quarantine_failed", context));
+  if (logFailure) fixedLog(logger, "error", eventPayload("quarantine_failed", context));
   return false;
 }
 
@@ -322,15 +322,37 @@ async function publishSelected({
         finalized = true;
         fixedLog(logger, "info", eventPayload("collector_offer", context, "finalization_reconciled"));
       } else {
-        summary.failed++;
-        summary.finalizationFailed++;
         if (reconciliation === false) {
-          summary.review++;
-          await quarantineReservation(store, reservationId, logger, context);
-          await safeStoreAction(() => store.markReview(candidate.nicheId, candidate.itemId), logger, "review_persistence_failed", context);
-          state.outcomes.push("finalization_error");
-          fixedLog(logger, "error", eventPayload("collector_offer", context, "finalization_error"));
+          const quarantined = await quarantineReservation(
+            store, reservationId, logger, context, false,
+          );
+          if (quarantined) {
+            summary.failed++;
+            summary.review++;
+            summary.finalizationFailed++;
+            await safeStoreAction(() => store.markReview(candidate.nicheId, candidate.itemId), logger, "review_persistence_failed", context);
+            state.outcomes.push("finalization_error");
+            fixedLog(logger, "error", eventPayload("collector_offer", context, "finalization_error"));
+          } else {
+            try {
+              finalized = await store.publicationFinalized(
+                reservationId, candidate.nicheId, candidate.itemId, affiliateUrl, candidate.identityKeys,
+              );
+            } catch {
+              finalized = false;
+            }
+            if (finalized) {
+              fixedLog(logger, "info", eventPayload("collector_offer", context, "finalization_reconciled"));
+            } else {
+              summary.failed++;
+              summary.finalizationFailed++;
+              state.outcomes.push("finalization_unknown");
+              fixedLog(logger, "error", eventPayload("collector_offer", context, "finalization_unknown"));
+            }
+          }
         } else {
+          summary.failed++;
+          summary.finalizationFailed++;
           state.outcomes.push("finalization_unknown");
           fixedLog(logger, "error", eventPayload("collector_offer", context, "finalization_unknown"));
         }

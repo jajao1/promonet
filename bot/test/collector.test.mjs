@@ -406,6 +406,76 @@ test("a lost finalization response is reconciled as published without review or 
   assert.equal(store.events.some((event) => event[0] === "review"), false);
 });
 
+test("a commit completing during quarantine is reconciled without downgrading the preview", async () => {
+  const claimed = [niche("games", "MLB200")];
+  const candidate = offer(203, "MLB200");
+  const store = fakeStore(claimed);
+  const logs = [];
+  let reconciliations = 0;
+  let sends = 0;
+  store.finalizePublication = async () => { throw Error("commit_response_lost secret"); };
+  store.publicationFinalized = async () => ++reconciliations === 2;
+  store.quarantineOffer = async (reservationId) => {
+    store.events.push(["quarantine", reservationId]);
+    return false;
+  };
+
+  const options = dependencies({
+    claimed,
+    candidatesByCategory: new Map([["MLB200", [candidate]]]),
+    store,
+    evolution: { send: async () => { sends++; return { key: { id: "ack" } }; } },
+    logger: { info: (event) => logs.push(event), error: (event) => logs.push(event) },
+  });
+  const result = await collectDue(options);
+  const retry = await collectDue(options);
+
+  assert.equal(reconciliations, 2);
+  assert.equal(sends, 1);
+  assert.equal(result.published, 1);
+  assert.equal(retry.published, 0);
+  assert.equal(result.finalizationFailed, 0);
+  assert.equal(result.review, 0);
+  assert.equal(store.events.filter((event) => event[0] === "quarantine").length, 1);
+  assert.equal(store.events.some((event) => event[0] === "review"), false);
+  assert.deepEqual(
+    store.events.filter((event) => event[0] === "preview").map((event) => event[3]),
+    ["selected"],
+  );
+  assert.ok(logs.some((event) => event.outcome === "finalization_reconciled"));
+  assert.doesNotMatch(JSON.stringify(logs), /secret/);
+});
+
+test("a failed quarantine with no confirmed commit preserves an unknown preview state", async () => {
+  const claimed = [niche("games", "MLB200")];
+  const candidate = offer(204, "MLB200");
+  const store = fakeStore(claimed);
+  const logs = [];
+  let reconciliations = 0;
+  store.finalizePublication = async () => { throw Error("commit_response_lost secret"); };
+  store.publicationFinalized = async () => { reconciliations++; return false; };
+  store.quarantineOffer = async () => false;
+
+  const result = await collectDue(dependencies({
+    claimed,
+    candidatesByCategory: new Map([["MLB200", [candidate]]]),
+    store,
+    logger: { info: (event) => logs.push(event), error: (event) => logs.push(event) },
+  }));
+
+  assert.equal(reconciliations, 2);
+  assert.equal(result.published, 0);
+  assert.equal(result.finalizationFailed, 1);
+  assert.equal(result.review, 0);
+  assert.equal(store.events.some((event) => event[0] === "review"), false);
+  assert.deepEqual(
+    store.events.filter((event) => event[0] === "preview").map((event) => event[3]),
+    ["selected"],
+  );
+  assert.ok(logs.some((event) => event.outcome === "finalization_unknown"));
+  assert.doesNotMatch(JSON.stringify(logs), /secret/);
+});
+
 test("an unavailable finalization reconciliation does not falsely quarantine a possible commit", async () => {
   const claimed = [niche("games", "MLB200")];
   const candidate = offer(202, "MLB200");
