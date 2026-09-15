@@ -4,21 +4,44 @@ import { SessionAlert } from "../session-alert.mjs";
 
 class PersistentIncidents {
   constructor() {
-    this.active = new Set();
+    this.active = false;
+    this.notified = false;
+    this.claimUntil = null;
+    this.now = 0;
+    this.failNextMark = false;
+    this.failNextResolve = false;
     this.begun = [];
+    this.marked = [];
     this.resolved = [];
   }
 
   async beginIncident(key) {
     this.begun.push(key);
-    if (this.active.has(key)) return false;
-    this.active.add(key);
+    if (this.active && (this.notified || this.claimUntil > this.now)) return false;
+    this.active = true;
+    this.notified = false;
+    this.claimUntil = this.now + 300;
     return true;
+  }
+
+  async markIncidentNotified(key) {
+    this.marked.push(key);
+    if (this.failNextMark) {
+      this.failNextMark = false;
+      throw Error("incident_acknowledgement_failed");
+    }
+    this.notified = true;
+    this.claimUntil = null;
   }
 
   async resolveIncident(key) {
     this.resolved.push(key);
-    this.active.delete(key);
+    if (this.failNextResolve) {
+      this.failNextResolve = false;
+      throw Error("incident_cleanup_failed");
+    }
+    this.active = false;
+    this.claimUntil = null;
   }
 }
 
@@ -50,6 +73,7 @@ test("two alert instances notify the configured WhatsApp once per persisted inci
   assert.equal(await second.required(), true);
   assert.equal(sends.length, 2);
   assert.deepEqual(incidents.begun, ["meli_session", "meli_session", "meli_session"]);
+  assert.deepEqual(incidents.marked, ["meli_session", "meli_session"]);
   assert.deepEqual(incidents.resolved, ["meli_session"]);
 });
 
@@ -60,6 +84,7 @@ test("concurrent required calls claim one incident and send once", async () => {
 
   assert.deepEqual(await Promise.all([alert.required(), alert.required()]), [true, false]);
   assert.equal(sends.length, 1);
+  assert.deepEqual(incidents.marked, ["meli_session"]);
 });
 
 test("a failed notification releases the incident and rethrows the original send error without logging", async () => {
@@ -93,6 +118,42 @@ test("a failed notification releases the incident and rethrows the original send
   assert.deepEqual(incidents.resolved, ["meli_session"]);
   assert.equal(await alert.required(), true);
   assert.equal(attempts, 2);
+  assert.deepEqual(incidents.marked, ["meli_session"]);
+});
+
+test("a failed cleanup remains retryable after the unacknowledged claim lease", async () => {
+  const incidents = new PersistentIncidents();
+  incidents.failNextResolve = true;
+  const sendError = Error("evolution_send_failed");
+  let attempts = 0;
+  const alert = createAlert({
+    incidents,
+    send: async () => {
+      attempts++;
+      if (attempts === 1) throw sendError;
+    },
+  }).alert;
+
+  await assert.rejects(alert.required(), (error) => error === sendError);
+  assert.equal(await alert.required(), false);
+  incidents.now = incidents.claimUntil + 1;
+  assert.equal(await alert.required(), true);
+  assert.equal(attempts, 2);
+  assert.deepEqual(incidents.marked, ["meli_session"]);
+});
+
+test("an acknowledgement persistence failure preserves the claim lease", async () => {
+  const incidents = new PersistentIncidents();
+  incidents.failNextMark = true;
+  const sends = [];
+  const alert = createAlert({ incidents, send: async (job) => sends.push(job) }).alert;
+
+  await assert.rejects(alert.required(), /incident_acknowledgement_failed/);
+  assert.deepEqual(incidents.resolved, []);
+  assert.equal(await alert.required(), false);
+  incidents.now = incidents.claimUntil + 1;
+  assert.equal(await alert.required(), true);
+  assert.equal(sends.length, 2);
 });
 
 test("restored awaits the idempotent persistent resolution", async () => {
@@ -101,6 +162,7 @@ test("restored awaits the idempotent persistent resolution", async () => {
   let finished = false;
   const incidents = {
     beginIncident: async () => true,
+    markIncidentNotified: async () => {},
     resolveIncident: async (key) => {
       assert.equal(key, "meli_session");
       await resolution;
@@ -131,7 +193,13 @@ test("rejects invalid dependencies and administrative destination", () => {
       /admin_whatsapp_notifier_invalid/,
     );
   }
-  for (const incidents of [undefined, {}, { beginIncident: async () => true }, { resolveIncident: async () => {} }]) {
+  for (const incidents of [
+    undefined,
+    {},
+    { beginIncident: async () => true, resolveIncident: async () => {} },
+    { beginIncident: async () => true, markIncidentNotified: async () => {} },
+    { markIncidentNotified: async () => {}, resolveIncident: async () => {} },
+  ]) {
     assert.throws(
       () => new SessionAlert({ destination, evolution: validEvolution, incidents }),
       /session_incidents_invalid/,

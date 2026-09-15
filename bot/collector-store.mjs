@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const IDENTITY_KEY = /^(?:item|url|product):[A-Za-z0-9._-]{1,256}$/;
 const INCIDENT_KEY = /^[a-z][a-z0-9_.-]{0,63}$/;
+const INCIDENT_CLAIM_SECONDS = 5 * 60;
 // PostgreSQL's two-integer advisory locks occupy a namespace distinct from
 // bigint singleton locks. "PROM" scopes the second integer to reservations.
 const RESERVATION_LOCK_NAMESPACE = 0x50524f4d;
@@ -165,8 +166,10 @@ CREATE TABLE IF NOT EXISTS promonet.collector_incidents(
   incident_key TEXT PRIMARY KEY,
   active BOOLEAN NOT NULL DEFAULT false,
   notified_at TIMESTAMPTZ,
+  claim_until TIMESTAMPTZ,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE promonet.collector_incidents ADD COLUMN IF NOT EXISTS claim_until TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS collector_incidents_active_idx
   ON promonet.collector_incidents(incident_key) WHERE active;
 `);
@@ -371,23 +374,46 @@ CREATE INDEX IF NOT EXISTS collector_incidents_active_idx
   async beginIncident(key) {
     requireIncidentKey(key);
     const result = await this.db.query(
-      `INSERT INTO promonet.collector_incidents(incident_key,active,notified_at,updated_at)
-       VALUES($1,true,now(),now())
+      `INSERT INTO promonet.collector_incidents(
+         incident_key,active,notified_at,claim_until,updated_at
+       )
+       VALUES($1,true,NULL,now()+($2 * interval '1 second'),now())
        ON CONFLICT(incident_key) DO UPDATE SET
-         active=true,notified_at=now(),updated_at=now()
+         active=true,
+         notified_at=NULL,
+         claim_until=now()+($2 * interval '1 second'),
+         updated_at=now()
        WHERE promonet.collector_incidents.active=false
+          OR (
+            promonet.collector_incidents.active=true
+            AND promonet.collector_incidents.notified_at IS NULL
+            AND (
+              promonet.collector_incidents.claim_until IS NULL
+              OR promonet.collector_incidents.claim_until<=now()
+            )
+          )
        RETURNING incident_key`,
-      [key],
+      [key, INCIDENT_CLAIM_SECONDS],
     );
     return result.rows.length > 0;
+  }
+
+  async markIncidentNotified(key) {
+    requireIncidentKey(key);
+    await this.db.query(
+      `UPDATE promonet.collector_incidents
+       SET notified_at=now(),claim_until=NULL,updated_at=now()
+       WHERE incident_key=$1 AND active=true AND notified_at IS NULL`,
+      [key],
+    );
   }
 
   async resolveIncident(key) {
     requireIncidentKey(key);
     await this.db.query(
       `UPDATE promonet.collector_incidents
-       SET active=false,updated_at=now()
-       WHERE incident_key=$1 AND active=true`,
+       SET active=false,claim_until=NULL,updated_at=now()
+       WHERE incident_key=$1`,
       [key],
     );
   }

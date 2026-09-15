@@ -4,6 +4,7 @@ export class SessionAlert {
     if (typeof evolution?.send !== "function") throw Error("admin_whatsapp_notifier_invalid");
     if (
       typeof incidents?.beginIncident !== "function" ||
+      typeof incidents?.markIncidentNotified !== "function" ||
       typeof incidents?.resolveIncident !== "function"
     ) throw Error("session_incidents_invalid");
     this.evolution = evolution;
@@ -19,7 +20,6 @@ export class SessionAlert {
         kind: "text",
         text: "A sessão de afiliados do Mercado Livre expirou. Envie uma nova requisição createLink para atualizar os cookies. As publicações ficarão pausadas até a sessão ser restaurada.",
       });
-      return true;
     } catch (error) {
       try {
         await this.incidents.resolveIncident("meli_session");
@@ -28,6 +28,8 @@ export class SessionAlert {
       }
       throw error;
     }
+    await this.incidents.markIncidentNotified("meli_session");
+    return true;
   }
 
   async restored() {

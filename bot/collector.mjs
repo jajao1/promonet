@@ -8,6 +8,11 @@ function outcome(error){
   return"delivery_error";
 }
 
+function isSessionFailure(error){return["session_expired","meli_session_missing"].includes(error?.message);}
+function incidentLog(event,niche,categoryId){return{event,vertical:niche.id,categoryId};}
+async function requireSessionAlert(sessionAlert,logger,niche,categoryId){try{await sessionAlert?.required();}catch{logger.error(incidentLog("session_alert_failed",niche,categoryId));}}
+async function restoreSessionIncident(sessionAlert,logger,niche,categoryId){try{await sessionAlert?.restored();}catch{logger.error(incidentLog("session_incident_restore_failed",niche,categoryId));}}
+
 export async function collectDue({store,niches,source,authorizedToken,meli,evolution,sessionAlert,dryRun,delay=defaultDelay,sendDelayMs=15000,logger={info(){},error(){}}}){
   const due=await store.claimDueNiches(niches);
   const summary={niches:due.length,published:0,review:0,empty:0};
@@ -27,12 +32,12 @@ export async function collectDue({store,niches,source,authorizedToken,meli,evolu
       let affiliateUrl;
       try{
         affiliateUrl=await meli.convert(offer.permalink,niche.tag,false);
-        await sessionAlert?.restored();
       }catch(error){
         await store.markReview(niche.id,offer.itemId);summary.review++;
-        if(["session_expired","meli_session_missing"].includes(error?.message)){try{await sessionAlert?.required();}catch{}}
+        if(isSessionFailure(error))await requireSessionAlert(sessionAlert,logger,niche,categoryId);
         await finish("affiliate_error");continue;
       }
+      await restoreSessionIncident(sessionAlert,logger,niche,categoryId);
       try{await evolution.send({destination:niche.destinationGroup,text:formatOffer(offer,affiliateUrl),kind:"image",mimetype:"image/jpeg"},offer.imageUrl);}
       catch{await store.markReview(niche.id,offer.itemId);summary.review++;await finish("delivery_error");continue;}
       await store.markPublished(niche.id,offer.itemId,affiliateUrl);
@@ -46,7 +51,7 @@ export async function collectDue({store,niches,source,authorizedToken,meli,evolu
   }
   return summary;
 }
-export async function collectOnce({store,niches,source,authorizedToken,meli,evolution,sessionAlert,dryRun}){
+export async function collectOnce({store,niches,source,authorizedToken,meli,evolution,sessionAlert,dryRun,logger={info(){},error(){}}}){
   const niche=await store.claimDueNiche(niches);
   if(!niche)return "idle";
   let selected;
@@ -58,14 +63,12 @@ export async function collectOnce({store,niches,source,authorizedToken,meli,evol
     await store.savePreview(niche.id,selected,dryRun?"simulated":"selected");
     if(dryRun){await store.completeRun(niche.id,"simulated");return "simulated";}
     const affiliateUrl=await meli.convert(selected.permalink,niche.tag,false);
-    await sessionAlert?.restored();
+    await restoreSessionIncident(sessionAlert,logger,niche,niche.categoryId);
     const text=formatOffer(selected,affiliateUrl);
     try{await evolution.send({destination:niche.destinationGroup,text,kind:"image",mimetype:"image/jpeg"},selected.imageUrl);}catch{await store.markReview(niche.id,selected.itemId);await store.completeRun(niche.id,"review");return "review";}
     await store.markPublished(niche.id,selected.itemId,affiliateUrl);await store.completeRun(niche.id,"published");return "published";
   }catch(error){
-    if(["session_expired","meli_session_missing"].includes(error?.message)){
-      try{await sessionAlert?.required();}catch{/* The original authentication failure remains authoritative. */}
-    }
+    if(isSessionFailure(error))await requireSessionAlert(sessionAlert,logger,niche,niche.categoryId);
     if(selected)await store.markReview(niche.id,selected.itemId);await store.completeRun(niche.id,"review");throw error;
   }
 }
