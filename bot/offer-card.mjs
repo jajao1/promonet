@@ -80,16 +80,16 @@ export async function downloadProductImage(url, { fetch = globalThis.fetch } = {
     const expectedLength = declaredLength(response.headers);
     if (!response.body || typeof response.body[Symbol.asyncIterator] !== "function") throw invalid();
 
-    const chunks = [];
+    const sink = Buffer.allocUnsafe(MAX_IMAGE_BYTES);
     let total = 0;
     for await (const chunk of response.body) {
       if (!(chunk instanceof Uint8Array)) throw invalid();
+      if (chunk.byteLength > MAX_IMAGE_BYTES - total) throw invalid();
+      sink.set(chunk, total);
       total += chunk.byteLength;
-      if (total > MAX_IMAGE_BYTES) throw invalid();
-      chunks.push(Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength));
     }
     if (total === 0 || (expectedLength !== null && total !== expectedLength)) throw invalid();
-    const buffer = Buffer.concat(chunks, total);
+    const buffer = Buffer.from(sink.subarray(0, total));
     await validateRaster(buffer, SAFE_IMAGE_FORMATS);
     return buffer;
   } catch {
@@ -118,7 +118,7 @@ async function loadLogo(logoPath) {
 async function measureText(text, { fontSize, fontWeight }) {
   const height = Math.ceil(fontSize * 2);
   const baseline = Math.ceil(fontSize * 1.45);
-  const svg = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${TEXT_PROBE_WIDTH}" height="${height}"><text x="2" y="${baseline}" font-family="Arial, 'DejaVu Sans', sans-serif" font-size="${fontSize}" font-weight="${fontWeight}" fill="white">${escapeSvg(text)}</text></svg>`);
+  const svg = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${TEXT_PROBE_WIDTH}" height="${height}"><text x="2" y="${baseline}" font-family="DejaVu Sans, sans-serif" font-size="${fontSize}" font-weight="${fontWeight}" fill="white">${escapeSvg(text)}</text></svg>`);
   const { info } = await sharp(svg).trim().png().toBuffer({ resolveWithObject: true });
   return info.width;
 }
@@ -188,7 +188,7 @@ async function overlaySvg(offer) {
   const prior = hasPriorPrice ? `<text x="66" y="997" class="prior">${escapeSvg(priorText)}</text><line x1="65" y1="988" x2="${Math.ceil(66 + priorWidth)}" y2="988" stroke="#aeb7b1" stroke-width="4"/>` : "";
   return Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1080" viewBox="0 0 1080 1080">
     <style>
-      text { font-family: Arial, "DejaVu Sans", sans-serif; }
+      text { font-family: "DejaVu Sans", sans-serif; }
       .brand { font-size: 43px; font-weight: 800; fill: #101512; letter-spacing: -1px; }
       .brand-accent { fill: #17a93e; }
       .badge { font-size: 29px; font-weight: 900; fill: #101512; }

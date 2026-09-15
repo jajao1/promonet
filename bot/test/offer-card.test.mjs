@@ -11,7 +11,7 @@ const MIB = 1024 * 1024;
 const productUrl = "https://http2.mlstatic.com/D_NQ_NP_123.jpg";
 
 function response(chunks, { status = 200, type = "image/png", length } = {}) {
-  const values = chunks.map((chunk) => new Uint8Array(chunk));
+  const values = chunks.map((chunk) => chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk));
   return {
     status,
     headers: new Headers({
@@ -153,6 +153,33 @@ test("enforces declared and streamed 8 MiB limits and detects truncation", async
   }), INVALID);
   await assert.rejects(downloadProductImage(productUrl, {
     fetch: async () => response([], { length: 0 }),
+  }), INVALID);
+});
+
+test("copies fragmented subarray chunks into one bounded sink", async () => {
+  const source = await solid(24, 18, "#e02090");
+  const splitAt = [0, Math.floor(source.length / 3), Math.floor(source.length * 2 / 3), source.length];
+  const fragments = splitAt.slice(0, -1).map((start, index) => {
+    const part = source.subarray(start, splitAt[index + 1]);
+    const oversizedBacking = new Uint8Array(2 * MIB);
+    oversizedBacking.set(part, MIB);
+    return oversizedBacking.subarray(MIB, MIB + part.length);
+  });
+  const originalConcat = Buffer.concat;
+  Buffer.concat = () => { throw new Error("fragment retention is forbidden"); };
+  try {
+    const downloaded = await downloadProductImage(productUrl, {
+      fetch: async () => response(fragments, { length: source.length }),
+    });
+    assert.deepEqual(downloaded, source);
+    assert.ok(downloaded.buffer.byteLength <= 8 * MIB, "returned storage remains bounded");
+  } finally {
+    Buffer.concat = originalConcat;
+  }
+
+  const oversizedFragments = Array.from({ length: 9 }, () => new Uint8Array(new ArrayBuffer(2 * MIB), 0, MIB));
+  await assert.rejects(downloadProductImage(productUrl, {
+    fetch: async () => response(oversizedFragments),
   }), INVALID);
 });
 
