@@ -131,16 +131,20 @@ export class PublicOffersStore {
   }
 
   async listSitemapCategories() {
-    const result = await this.db.query(`SELECT niche_id,MAX(published_at) AS latest_at
-      FROM promonet.offer_publications WHERE published_at >= $1
-      GROUP BY niche_id ORDER BY niche_id`, [this.activeSince()]);
+    const result = await this.db.query(`SELECT pub.niche_id,MAX(pub.published_at) AS latest_at
+      FROM promonet.offer_publications pub
+      JOIN promonet.offer_previews p USING(niche_id,item_id)
+      WHERE pub.published_at >= $1 AND p.state='published'
+      GROUP BY pub.niche_id ORDER BY pub.niche_id`, [this.activeSince()]);
     return result.rows.map((row) => ({ slug: row.niche_id, lastModified: new Date(row.latest_at).toISOString() }));
   }
 
   async listSitemapOffers() {
-    const result = await this.db.query(`SELECT DISTINCT ON (niche_id,item_id) niche_id,item_id,published_at
-      FROM promonet.offer_publications WHERE published_at >= $1 AND affiliate_url IS NOT NULL
-      ORDER BY niche_id,item_id,published_at DESC`, [this.activeSince()]);
+    const result = await this.db.query(`SELECT DISTINCT ON (pub.niche_id,pub.item_id) pub.niche_id,pub.item_id,pub.published_at
+      FROM promonet.offer_publications pub
+      JOIN promonet.offer_previews p USING(niche_id,item_id)
+      WHERE pub.published_at >= $1 AND pub.affiliate_url IS NOT NULL AND p.state='published'
+      ORDER BY pub.niche_id,pub.item_id,pub.published_at DESC`, [this.activeSince()]);
     return result.rows.map((row) => ({ category: row.niche_id, itemId: row.item_id, lastModified: new Date(row.published_at).toISOString() }));
   }
 

@@ -81,4 +81,7 @@ test("lists only active category and offer URLs for the sitemap", async () => {
   assert.deepEqual(await store.listSitemapCategories(), [{ slug: "games", lastModified: "2026-09-13T12:00:00.000Z" }]);
   assert.deepEqual(await store.listSitemapOffers(), [{ category: "games", itemId: "MLB1", lastModified: "2026-09-13T12:00:00.000Z" }]);
   assert.match(db.calls[1].text, /published_at\s*>=\s*\$1/);
+  assert.match(db.calls[0].text, /JOIN promonet\.offer_previews/);
+  assert.match(db.calls[1].text, /JOIN promonet\.offer_previews/);
+  assert.match(db.calls[1].text, /state\s*=\s*'published'/);
 });
