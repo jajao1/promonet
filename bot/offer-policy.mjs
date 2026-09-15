@@ -6,15 +6,17 @@ const FOOD_TITLE_SIGNALS = [
   "biscoito", "bolacha", "carne", "frango", "farinha", "azeite", "molho",
   "cereal", "salgadinho", "queijo", "mussarela", "manteiga", "margarina",
   "iogurte", "presunto", "mortadela", "salame", "bacon", "ovos", "achocolatado",
-  "bombom", "bombons", "racao", "acai", "sorvete", "linguica", "bala", "mel",
-  "oleo", "sal",
+  "bombom", "bombons", "racao", "acai", "sorvete", "linguica",
 ];
 
 const CONTEXTUAL_FOOD_PHRASES = [
   /(?:^| )agua (?:mineral|com gas)(?: |$)/,
   /(?:^| )agua de coco(?: |$)/,
   /(?:^| )oleo de soja(?: |$)/,
-  /(?:^| )sal refinado(?: |$)/,
+  /(?:^| )oleo de (?:girassol|canola|milho|coco|azeitona)(?: |$)/,
+  /(?:^| )sal (?:refinado|de cozinha|marinho|grosso|rosa)(?: |$)/,
+  /(?:^| )bala (?:fini|doce|de gelatina|mastigavel)(?: |$)/,
+  /(?:^| )mel (?:puro|natural|organico|silvestre|de abelha)(?: |$)/,
   /(?:^| )hamburguer(?:es)?(?: |$)/,
   /(?:^| )cafe (?:torrado|moido|em graos|soluvel|em capsulas?)(?: |$)/,
   /(?:^| )leite (?:integral|desnatado|semidesnatado|em po|condensado|zero lactose)(?: |$)/,
@@ -28,6 +30,13 @@ const CONTEXTUAL_FOOD_PHRASES = [
 ];
 
 const AMBIGUOUS_FOOD_TITLE_SIGNALS = ["cafe", "leite", "vinho", "chocolate"];
+const POLYSEMOUS_FOOD_TITLE_SIGNALS = ["oleo", "sal", "bala", "mel"];
+const NON_FOOD_CONTEXTUAL_PHRASES = [
+  /(?:^| )oleo (?:de )?(?:motor|corporal|lubrificante|hidratante)(?: |$)/,
+  /(?:^| )sal de banho(?: |$)/,
+  /(?:^| )bala de airsoft(?: |$)/,
+  /(?:^| )shampoo (?:de |com )?mel(?: |$)/,
+];
 const NON_FOOD_HEAD_SIGNALS = new Set([
   "moedor", "espremedor", "maquina", "porta", "fatiador", "adega", "espumador",
   "taca", "caneca", "jarra", "forma", "pote", "galheteiro", "cafeteira", "chaleira",
@@ -36,7 +45,11 @@ const NON_FOOD_HEAD_SIGNALS = new Set([
   "bermuda", "short", "saia", "casaco", "jaqueta", "moletom", "sandalia",
   "chinelo", "bolsa", "bone", "chapeu", "cinto", "gravata", "roupa",
 ]);
-const FOOD_HEAD_SIGNALS = new Set([...FOOD_TITLE_SIGNALS, ...AMBIGUOUS_FOOD_TITLE_SIGNALS]);
+const FOOD_HEAD_SIGNALS = new Set([
+  ...FOOD_TITLE_SIGNALS,
+  ...AMBIGUOUS_FOOD_TITLE_SIGNALS,
+  ...POLYSEMOUS_FOOD_TITLE_SIGNALS,
+]);
 const UNIT_EVIDENCE = /(?:^| )\d+(?:g|kg|ml|l)(?: |$)/;
 
 function normalizedWords(value) {
@@ -55,12 +68,20 @@ export function isFoodOrBeverage(offer) {
   if (!title) return false;
   const words = title.split(/\s+/);
   const tokens = new Set(words);
-  const hasFoodToken = FOOD_TITLE_SIGNALS.some(signal => tokens.has(signal)) ||
-    AMBIGUOUS_FOOD_TITLE_SIGNALS.some(signal => tokens.has(signal));
+  const hasSignal = signal => tokens.has(signal) || tokens.has(`${signal}s`);
+  const hasFoodToken = FOOD_TITLE_SIGNALS.some(hasSignal) ||
+    AMBIGUOUS_FOOD_TITLE_SIGNALS.some(hasSignal) ||
+    POLYSEMOUS_FOOD_TITLE_SIGNALS.some(hasSignal);
   const hasFoodPhrase = CONTEXTUAL_FOOD_PHRASES.some(pattern => pattern.test(title));
-  if (hasFoodPhrase || FOOD_HEAD_SIGNALS.has(words[0]) ||
-      (tokens.has("plus") && hasFoodToken) || (UNIT_EVIDENCE.test(title) && hasFoodToken)) return true;
-  if (NON_FOOD_HEAD_SIGNALS.has(words[0]) && hasFoodToken) return false;
+  if (hasFoodPhrase || (tokens.has("plus") && hasFoodToken)) return true;
+  if (NON_FOOD_CONTEXTUAL_PHRASES.some(pattern => pattern.test(title))) return false;
+  const earlyWords = words.slice(0, 5);
+  const hasNonFoodHead = earlyWords.some(word =>
+    NON_FOOD_HEAD_SIGNALS.has(word) || (word.endsWith("s") && NON_FOOD_HEAD_SIGNALS.has(word.slice(0, -1))));
+  if (hasNonFoodHead && hasFoodToken) return false;
+  const hasFoodHead = earlyWords.some(word =>
+    FOOD_HEAD_SIGNALS.has(word) || (word.endsWith("s") && FOOD_HEAD_SIGNALS.has(word.slice(0, -1))));
+  if (hasFoodHead || (UNIT_EVIDENCE.test(title) && hasFoodToken)) return true;
   return hasFoodToken;
 }
 

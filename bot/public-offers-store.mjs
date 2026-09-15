@@ -1,6 +1,7 @@
-import { categoryByNicheId, categoryBySlug } from "./storefront-catalog.mjs";
+import { categoryByNicheId, categoryBySlug, storefrontCategories } from "./storefront-catalog.mjs";
 
 const number = (value) => value == null ? null : Number(value);
+const publicNicheIds = Object.freeze(storefrontCategories.map(({ nicheId }) => nicheId));
 
 export class PublicOffersStore {
   constructor(db, { now = () => new Date() } = {}) { this.db = db; this.now = now; }
@@ -44,8 +45,9 @@ export class PublicOffersStore {
     WHERE p.state = 'published'
       AND ($1 = '' OR p.title ILIKE $1)
       AND ($2 = '' OR p.niche_id = $2)
+      AND p.niche_id = ANY($4::text[])
     ORDER BY ${order}
-    LIMIT $4 OFFSET $5`, [search, nicheId, this.activeSince(), safeLimit, (safePage - 1) * safeLimit]);
+    LIMIT $5 OFFSET $6`, [search, nicheId, this.activeSince(), publicNicheIds, safeLimit, (safePage - 1) * safeLimit]);
     const items = result.rows.map((row) => this.mapOffer(row)).filter(Boolean);
     return {
       items,

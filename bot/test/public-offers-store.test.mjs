@@ -31,7 +31,11 @@ test("lists only recent published offers using bounded parameterized filters", a
   assert.equal(result.items[0].redirectUrl, "/oferta/games/MLB1");
   assert.match(db.calls[0].text, /offer_publications/);
   assert.match(db.calls[0].text, /state\s*=\s*'published'/);
-  assert.deepEqual(db.calls[0].values, ["%controle%", "games", new Date("2026-09-07T12:00:00Z"), 48, 48]);
+  assert.deepEqual(db.calls[0].values.slice(0,3), ["%controle%", "games", new Date("2026-09-07T12:00:00Z")]);
+  assert.deepEqual(db.calls[0].values.slice(-2), [48,48]);
+  assert.ok(Array.isArray(db.calls[0].values[3]));
+  assert.ok(db.calls[0].values[3].includes("games"));
+  assert.match(db.calls[0].text,/p\.niche_id\s*=\s*ANY\(\$4::text\[\]\)/);
   assert.match(db.calls[0].text, /published_at\s*>=\s*\$3/);
   assert.ok(!db.calls[0].text.includes("controle"));
 });
@@ -119,4 +123,21 @@ test("omits unmapped internal niches instead of exposing dead public routes",asy
   assert.deepEqual(await store.categories(),[]);
   assert.deepEqual(await store.listSitemapCategories(),[]);
   assert.deepEqual(await store.listSitemapOffers(),[]);
+});
+
+test("filters unmapped niches before window count and preserves the server page total",async()=>{
+  const mapped=(itemId)=>({
+    niche_id:"games",item_id:itemId,title:"Console",price:"100",original_price:"150",
+    published_at:"2026-09-14T12:00:00Z",total_count:"25",
+  });
+  const db=database([[mapped("MLB21"),mapped("MLB22")]]);
+  const result=await new PublicOffersStore(db,{now:()=>new Date("2026-09-14T12:00:00Z")})
+    .list({page:3,limit:10});
+  assert.equal(result.total,25);
+  assert.deepEqual(result.items.map(({itemId})=>itemId),["MLB21","MLB22"]);
+  assert.match(db.calls[0].text,/p\.niche_id\s*=\s*ANY\(\$4::text\[\]\)/);
+  assert.ok(db.calls[0].text.indexOf("p.niche_id = ANY") < db.calls[0].text.lastIndexOf("ORDER BY"));
+  assert.deepEqual(db.calls[0].values.slice(-2),[10,20]);
+  assert.ok(db.calls[0].values[3].includes("clothing"));
+  assert.ok(!db.calls[0].values[3].includes("unknown"));
 });

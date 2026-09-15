@@ -110,6 +110,18 @@ const contextualFoodTitles=[
   "Sal refinado 1kg",
 ];
 
+const prefixedContextualNonFoodTitles=[
+  "Mondial Espremedor de suco turbo",
+  "Kit 6 taças para vinho cristal",
+  "Conjunto de canecas para cerveja",
+  "Electrolux espumador de leite elétrico",
+  "Óleo motor sintético 5W30 1L",
+  "Óleo corporal hidratante 200ml",
+  "Sal de banho relaxante 500g",
+  "Bala de airsoft 6mm",
+  "Shampoo de mel 400ml",
+];
+
 test("uses product heads and usage-target context for ambiguous food terms",()=>{
   for(const title of contextualNonFoodTitles)
     assert.equal(isFoodOrBeverage({title,categoryId:"MLB31447"}),false,title);
@@ -127,6 +139,31 @@ test("applies every contextual fixture through eligibility and diversification",
     assert.equal(isEligibleOffer(offer,{categoryId:"MLB31447",recentIds:new Set()}),false,offer.title);
   assert.deepEqual(
     diversifyOffers([...rejected,...allowed],{limit:10}).map(offer=>offer.itemId),
+    allowed.map(offer=>offer.itemId),
+  );
+});
+
+test("finds prefixed and plural non-food heads without accepting adjacent food products",()=>{
+  for(const title of prefixedContextualNonFoodTitles)
+    assert.equal(isFoodOrBeverage({title,categoryId:"MLB31447"}),false,title);
+  for(const title of [
+    "Kit 6 chocolates Bis 90g",
+    "Conjunto de vinhos tintos 750ml",
+    "Óleo de girassol 900ml",
+    "Sal de cozinha 1kg",
+    "Bala Fini minhocas 500g",
+    "Mel natural orgânico 500g",
+  ]) assert.equal(isFoodOrBeverage({title,categoryId:"MLB31447"}),true,title);
+});
+
+test("applies prefixed contextual probes through eligibility and diversification",()=>{
+  const allowed=prefixedContextualNonFoodTitles.map((title,index)=>({
+    ...item,title,itemId:`PREFIX${index}`,nicheId:`prefix-${index}`,categoryId:"MLB31447",
+  }));
+  for(const offer of allowed)
+    assert.equal(isEligibleOffer(offer,{categoryId:"MLB31447",recentIds:new Set()}),true,offer.title);
+  assert.deepEqual(
+    diversifyOffers(allowed,{limit:10}).map(offer=>offer.itemId),
     allowed.map(offer=>offer.itemId),
   );
 });
