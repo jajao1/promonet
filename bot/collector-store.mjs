@@ -16,6 +16,7 @@ export const COLLECTOR_ROUND_METRIC_KEYS = Object.freeze([
   "rejectedFood",
   "rejectedIneligible",
   "rejectedRecent",
+  "rejectedUrl",
   "rejectedFingerprint",
   "rejectedQuota",
   "rejectedDuplicate",
@@ -213,29 +214,56 @@ CREATE INDEX IF NOT EXISTS collector_incidents_active_idx
 
   async claimDueNiches(niches) {
     const claimed = [];
-    for (const niche of niches.filter((candidate) => candidate.enabled)) {
-      const result = await this.db.query(
-        `INSERT INTO promonet.collector_runs(niche_id,last_started_at,last_result)
-         VALUES($1,now(),'running')
-         ON CONFLICT(niche_id) DO UPDATE
-         SET last_started_at=now(),last_result='running',updated_at=now()
-         WHERE promonet.collector_runs.last_started_at IS NULL
-           OR promonet.collector_runs.last_started_at + ($2 * interval '1 minute') <= now()
-         RETURNING niche_id`,
-        [niche.id, niche.intervalMinutes],
-      );
-      if (result.rows.length) claimed.push(niche);
+    const client = await this.db.connect();
+    let transactionOpen = false;
+    let reusableClient = false;
+    try {
+      await client.query("BEGIN");
+      transactionOpen = true;
+      for (const niche of niches.filter((candidate) => candidate.enabled)) {
+        const result = await client.query(
+          `INSERT INTO promonet.collector_runs(niche_id,last_started_at,last_result)
+           VALUES($1,now(),'running')
+           ON CONFLICT(niche_id) DO UPDATE
+           SET last_started_at=now(),last_result='running',updated_at=now()
+           WHERE promonet.collector_runs.last_started_at IS NULL
+             OR promonet.collector_runs.last_started_at + ($2 * interval '1 minute') <= now()
+           RETURNING niche_id`,
+          [niche.id, niche.intervalMinutes],
+        );
+        if (result.rows.length) claimed.push(niche);
+      }
+      let ordered = claimed;
+      if (claimed.length >= 2) {
+        const rotation = await client.query(
+          `INSERT INTO promonet.collector_rotation(id,vertical_cursor) VALUES(1,0)
+           ON CONFLICT(id) DO UPDATE
+           SET vertical_cursor=(promonet.collector_rotation.vertical_cursor+1)%$1
+           RETURNING vertical_cursor`,
+          [claimed.length],
+        );
+        const start = Number(rotation.rows[0]?.vertical_cursor ?? 0) % claimed.length;
+        ordered = claimed.slice(start).concat(claimed.slice(0, start));
+      }
+      await client.query("COMMIT");
+      transactionOpen = false;
+      reusableClient = true;
+      return ordered;
+    } catch (error) {
+      if (transactionOpen) {
+        try {
+          await client.query("ROLLBACK");
+          transactionOpen = false;
+          reusableClient = true;
+        } catch {
+          // Preserve the claim or rotation failure.
+        }
+      }
+      throw error;
+    } finally {
+      if (reusableClient) client.release();
+      else client.release(true);
     }
-    if (claimed.length < 2) return claimed;
-    const rotation = await this.db.query(
-      `INSERT INTO promonet.collector_rotation(id,vertical_cursor) VALUES(1,0)
-       ON CONFLICT(id) DO UPDATE
-       SET vertical_cursor=(promonet.collector_rotation.vertical_cursor+1)%$1
-       RETURNING vertical_cursor`,
-      [claimed.length],
-    );
-    const start = Number(rotation.rows[0]?.vertical_cursor ?? 0) % claimed.length;
-    return claimed.slice(start).concat(claimed.slice(0, start));
   }
 
   async nextCategory(niche) {

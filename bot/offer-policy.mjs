@@ -193,14 +193,24 @@ function boundedQuota(value, fallback, maximum) {
   return Math.min(maximum, value);
 }
 
+const IDENTITY_KEY = /^(?:item|url|product):[A-Za-z0-9._-]{1,256}$/;
+
+function trustedIdentityKeys(candidate) {
+  if (!Array.isArray(candidate.identityKeys) || candidate.identityKeys.length === 0 ||
+      candidate.identityKeys.some((key) => typeof key !== "string" || !IDENTITY_KEY.test(key))) return [];
+  return [...new Set(candidate.identityKeys)];
+}
+
 export function compareOffers(a, b) {
   return a.rank - b.rank || discount(b) - discount(a) || a.itemId.localeCompare(b.itemId);
 }
 
-export function diversifyOffers(candidates, { limit = 10, perNiche = 2, recentIds = new Set() } = {}) {
+export function diversifyOfferPool(candidates, { limit = 10, perNiche = 2, recentIds = new Set() } = {}) {
   const effectiveLimit = boundedQuota(limit, 10, 10);
   const effectivePerNiche = boundedQuota(perNiche, 2, 2);
-  if (!Array.isArray(candidates) || effectiveLimit === null || effectivePerNiche === null) return [];
+  if (!Array.isArray(candidates) || effectiveLimit === null || effectivePerNiche === null) {
+    return { selected: [], rejectedDuplicate: [], rejectedQuota: [] };
+  }
 
   const groups = new Map();
   for (const candidate of candidates) {
@@ -224,6 +234,8 @@ export function diversifyOffers(candidates, { limit = 10, perNiche = 2, recentId
   const cursors = new Map([...groups.keys()].map(nicheId => [nicheId, 0]));
   const selected = [];
   const selectedIds = new Set();
+  const selectedIdentityKeys = new Set();
+  const rejectedDuplicate = new Set();
   const counts = new Map();
   let progressed = true;
   while (selected.length < effectiveLimit && progressed) {
@@ -232,17 +244,35 @@ export function diversifyOffers(candidates, { limit = 10, perNiche = 2, recentId
       if (selected.length >= effectiveLimit || (counts.get(nicheId) ?? 0) >= group.cap) continue;
       const offers = group.offers;
       let cursor = cursors.get(nicheId);
-      while (cursor < offers.length && selectedIds.has(offers[cursor].itemId)) cursor += 1;
+      while (cursor < offers.length) {
+        const offer = offers[cursor];
+        const identityKeys = trustedIdentityKeys(offer);
+        if (!selectedIds.has(offer.itemId) && !identityKeys.some((key) => selectedIdentityKeys.has(key))) break;
+        rejectedDuplicate.add(offer);
+        cursor += 1;
+      }
       cursors.set(nicheId, cursor + 1);
       if (cursor >= offers.length) continue;
       const offer = offers[cursor];
       selected.push(offer);
       selectedIds.add(offer.itemId);
+      for (const key of trustedIdentityKeys(offer)) selectedIdentityKeys.add(key);
       counts.set(nicheId, (counts.get(nicheId) ?? 0) + 1);
       progressed = true;
     }
   }
-  return selected;
+  const selectedSet = new Set(selected);
+  const rejectedQuota = [];
+  for (const group of groups.values()) {
+    for (const offer of group.offers) {
+      if (!selectedSet.has(offer) && !rejectedDuplicate.has(offer)) rejectedQuota.push(offer);
+    }
+  }
+  return { selected, rejectedDuplicate: [...rejectedDuplicate], rejectedQuota };
+}
+
+export function diversifyOffers(candidates, options) {
+  return diversifyOfferPool(candidates, options).selected;
 }
 
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });

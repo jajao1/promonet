@@ -539,6 +539,31 @@ test("real PostgreSQL contention grants a fresh ten-minute lease after the lock 
   }
 });
 
+test("real PostgreSQL rolls back earlier due claims when a later claim fails", {
+  skip: !process.env.PROMONET_TEST_DATABASE_URL,
+}, async () => {
+  const pool = new pg.Pool({ connectionString: process.env.PROMONET_TEST_DATABASE_URL });
+  const suffix = randomUUID().replaceAll("-", "");
+  const ids = [`atomic_first_${suffix}`, `atomic_second_${suffix}`];
+  try {
+    await pool.query("CREATE SCHEMA IF NOT EXISTS promonet");
+    const store = new CollectorStore(pool);
+    await store.init();
+    await assert.rejects(() => store.claimDueNiches([
+      { id: ids[0], enabled: true, intervalMinutes: 5 },
+      { id: ids[1], enabled: true, intervalMinutes: "invalid" },
+    ]));
+    const result = await pool.query(
+      "SELECT niche_id FROM promonet.collector_runs WHERE niche_id=ANY($1::text[])",
+      [ids],
+    );
+    assert.deepEqual(result.rows, []);
+  } finally {
+    await pool.query("DELETE FROM promonet.collector_runs WHERE niche_id=ANY($1::text[])", [ids]);
+    await pool.end();
+  }
+});
+
 test("real PostgreSQL init migrates only the legacy identity format constraint", {
   skip: !process.env.PROMONET_UPGRADE_TEST_DATABASE_URL,
 }, async () => {
@@ -661,6 +686,24 @@ test("finalizes identities publication and preview atomically with one concurren
   assert.ok([...db.identities.values()].every((row) => row.published_at && !row.reservation_id));
 });
 
+test("a fresh store instance sees finalized identities after a simulated process restart", async () => {
+  const sharedDatabase = new BehavioralDatabase();
+  const beforeRestart = new CollectorStore(sharedDatabase);
+  sharedDatabase.previews.set("games:MLB1", { state: "selected" });
+  assert.equal(await beforeRestart.reserveOffer([ITEM_1, PRODUCT], {
+    nicheId: "games", itemId: "MLB1", reservationId: RESERVATION_A,
+  }), true);
+  assert.equal(await beforeRestart.finalizePublication(
+    RESERVATION_A, "games", "MLB1", "https://meli.la/ours",
+  ), true);
+
+  const afterRestart = new CollectorStore(sharedDatabase);
+  assert.deepEqual(await afterRestart.recentIdentityKeys(7), new Set([ITEM_1, PRODUCT]));
+  assert.equal(await afterRestart.reserveOffer([ITEM_2, PRODUCT], {
+    nicheId: "tools", itemId: "MLB2", reservationId: RESERVATION_B,
+  }), false);
+});
+
 test("finalization rolls back every write and poisons the client only when rollback fails", async () => {
   const db = new BehavioralDatabase();
   const store = new CollectorStore(db);
@@ -760,7 +803,7 @@ test("records only fixed nonnegative integer metrics through parameters", async 
   const db = new BehavioralDatabase();
   const store = new CollectorStore(db);
   const startedAt = new Date("2026-09-15T12:00:00.000Z");
-  const summary = { discovered: 12, rejected: 4, skipped: 2, delivered: 5, failed: 1 };
+  const summary = { discovered: 12, rejected: 4, rejectedUrl: 1, skipped: 2, delivered: 5, failed: 1 };
   await store.recordRound(ROUND_ID, summary, startedAt);
   const call = db.calls.at(-1);
   assert.match(call.sql, /VALUES\(\$1,\$2,\$3::jsonb\)/i);
@@ -965,13 +1008,92 @@ test("real PostgreSQL migration resets legacy incidents once", {
   }
 });
 
+class ClaimDatabase {
+  constructor({ failClaimId = null, failRotation = false, failRollback = false, rotation = 0 } = {}) {
+    this.failClaimId = failClaimId;
+    this.failRotation = failRotation;
+    this.failRollback = failRollback;
+    this.rotation = rotation;
+    this.runs = new Map();
+    this.calls = [];
+    this.releases = [];
+  }
+
+  execute(sql, args, pending = this.runs) {
+    if (/INSERT INTO promonet\.collector_runs/i.test(sql)) {
+      if (args[0] === this.failClaimId) throw Error("claim_failed");
+      pending.set(args[0], "running");
+      return { rows: [{ niche_id: args[0] }], rowCount: 1 };
+    }
+    if (/INSERT INTO promonet\.collector_rotation/i.test(sql)) {
+      if (this.failRotation) throw Error("rotation_failed");
+      return { rows: [{ vertical_cursor: this.rotation }], rowCount: 1 };
+    }
+    return { rows: [], rowCount: 0 };
+  }
+
+  async query(sql, args = []) {
+    this.calls.push({ sql, args, client: false });
+    return this.execute(sql, args);
+  }
+
+  async connect() {
+    const database = this;
+    const pending = new Map();
+    let transactionOpen = false;
+    return {
+      async query(sql, args = []) {
+        database.calls.push({ sql, args, client: true });
+        if (sql === "BEGIN") { transactionOpen = true; return { rows: [] }; }
+        if (sql === "COMMIT") {
+          for (const [key, value] of pending) database.runs.set(key, value);
+          transactionOpen = false;
+          return { rows: [] };
+        }
+        if (sql === "ROLLBACK") {
+          if (database.failRollback) throw Error("rollback_failed");
+          pending.clear();
+          transactionOpen = false;
+          return { rows: [] };
+        }
+        return database.execute(sql, args, pending);
+      },
+      release(force = false) {
+        database.releases.push(force);
+        if (!force) assert.equal(transactionOpen, false);
+      },
+    };
+  }
+}
+
+test("due niche claims and rotation roll back atomically after any later failure", async () => {
+  const niches = [
+    { id: "tools", enabled: true, intervalMinutes: 5 },
+    { id: "games", enabled: true, intervalMinutes: 5 },
+    { id: "home", enabled: true, intervalMinutes: 5 },
+  ];
+  for (const failure of [{ failClaimId: "games" }, { failRotation: true }]) {
+    const db = new ClaimDatabase(failure);
+    await assert.rejects(() => new CollectorStore(db).claimDueNiches(niches), /(?:claim|rotation)_failed/);
+    assert.equal(db.runs.size, 0);
+    assert.ok(db.calls.every((call) => call.client));
+    assert.deepEqual(db.releases, [false]);
+  }
+});
+
+test("due claim rollback failure destroys the checked-out client", async () => {
+  const db = new ClaimDatabase({ failRotation: true, failRollback: true });
+  const niches = [
+    { id: "tools", enabled: true, intervalMinutes: 5 },
+    { id: "games", enabled: true, intervalMinutes: 5 },
+  ];
+  await assert.rejects(() => new CollectorStore(db).claimDueNiches(niches), /rotation_failed/);
+  assert.equal(db.runs.size, 0);
+  assert.deepEqual(db.releases, [true]);
+});
+
 test("claims enabled due niches in persisted rotated order", async () => {
-  const calls = [];
-  const db = { query: async (sql, args) => {
-    calls.push({ sql, args });
-    if (sql.includes("collector_rotation")) return { rows: [{ vertical_cursor: 1 }] };
-    return { rows: [{ niche_id: args[0] }] };
-  } };
+  const db = new ClaimDatabase({ rotation: 1 });
   const store = new CollectorStore(db);
   const niches = [
     { id: "technology", enabled: true, intervalMinutes: 5 },
@@ -980,7 +1102,9 @@ test("claims enabled due niches in persisted rotated order", async () => {
     { id: "tools", enabled: true, intervalMinutes: 5 },
   ];
   assert.deepEqual((await store.claimDueNiches(niches)).map((niche) => niche.id), ["games", "tools", "technology"]);
-  assert.deepEqual(calls.filter((call) => !call.sql.includes("collector_rotation")).map((call) => call.args[0]), ["technology", "games", "tools"]);
+  assert.deepEqual(db.calls.filter((call) => /INSERT INTO promonet\.collector_runs/i.test(call.sql)).map((call) => call.args[0]), ["technology", "games", "tools"]);
+  assert.ok(db.calls.every((call) => call.client));
+  assert.deepEqual(db.releases, [false]);
 });
 
 test("leaf rotation advances and wraps", async () => {

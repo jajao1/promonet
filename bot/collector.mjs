@@ -2,7 +2,7 @@ import { randomUUID as defaultRandomUUID } from "node:crypto";
 import { setTimeout as defaultDelay } from "node:timers/promises";
 import { composeOfferCard } from "./offer-card.mjs";
 import { COLLECTOR_ROUND_METRIC_KEYS } from "./collector-store.mjs";
-import { diversifyOffers, formatOffer, isEligibleOffer, isFoodOrBeverage } from "./offer-policy.mjs";
+import { diversifyOfferPool, formatOffer, isEligibleOffer, isFoodOrBeverage } from "./offer-policy.mjs";
 import { offerIdentities } from "./product-fingerprint.mjs";
 
 function emptySummary() {
@@ -86,7 +86,6 @@ function finishResult(state, dryRun) {
 
 function classifyCandidates(states, recentIdentityKeys, summary) {
   const eligible = [];
-  const inCycleKeys = new Set();
 
   for (const state of states) {
     if (state.fixedResult) continue;
@@ -110,24 +109,21 @@ function classifyCandidates(states, recentIdentityKeys, summary) {
         summary.rejectedIneligible++;
         continue;
       }
-      const exactRecent = identities.slice(0, 2).some((key) => recentIdentityKeys.has(key));
-      if (exactRecent) {
+      if (identities.some((key) => key.startsWith("item:") && recentIdentityKeys.has(key))) {
         summary.rejected++;
         summary.rejectedRecent++;
         continue;
       }
-      if (identities.slice(2).some((key) => recentIdentityKeys.has(key))) {
+      if (identities.some((key) => key.startsWith("url:") && recentIdentityKeys.has(key))) {
+        summary.rejected++;
+        summary.rejectedUrl++;
+        continue;
+      }
+      if (identities.some((key) => key.startsWith("product:") && recentIdentityKeys.has(key))) {
         summary.rejected++;
         summary.rejectedFingerprint++;
         continue;
       }
-      if (identities.some((key) => inCycleKeys.has(key))) {
-        summary.rejected++;
-        summary.rejectedDuplicate++;
-        summary.skipped++;
-        continue;
-      }
-      for (const key of identities) inCycleKeys.add(key);
       candidate.identityKeys = identities;
       state.eligibleCount++;
       summary.eligible++;
@@ -406,13 +402,12 @@ export async function collectDue({
     }
 
     const eligible = classifyCandidates(states, recentIdentityKeys, summary);
-    const selected = diversifyOffers(eligible, { limit: roundLimit, perNiche, recentIds: new Set() });
-    const selectedCandidates = new Set(selected);
-    for (const candidate of eligible) {
-      if (selectedCandidates.has(candidate)) continue;
-      summary.rejectedQuota++;
-      summary.skipped++;
-    }
+    const selection = diversifyOfferPool(eligible, { limit: roundLimit, perNiche, recentIds: new Set() });
+    const { selected } = selection;
+    summary.rejectedDuplicate += selection.rejectedDuplicate.length;
+    summary.rejected += selection.rejectedDuplicate.length;
+    summary.rejectedQuota += selection.rejectedQuota.length;
+    summary.skipped += selection.rejectedDuplicate.length + selection.rejectedQuota.length;
     const statesByNiche = new Map(states.map((state) => [state.niche.id, state]));
     for (const candidate of selected) statesByNiche.get(candidate.nicheId).selected.push(candidate);
     for (const state of states) {

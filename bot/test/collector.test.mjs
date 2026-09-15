@@ -160,6 +160,43 @@ test("counts food ineligible recent exact recent fingerprint quota and duplicate
   assert.equal(result.published, 2);
 });
 
+test("a quota-discarded offer does not suppress an equivalent selected from another niche", async () => {
+  const claimed = [niche("tools", "MLB100", 1), niche("games", "MLB200", 1)];
+  const quotaDiscarded = offer(1, "MLB100", { rank: 2, title: "Controle Sony DualSense PS5" });
+  const selectedTool = offer(2, "MLB100", { rank: 1, title: "Furadeira Bosch GSB modelo dois" });
+  const selectedEquivalent = offer(3, "MLB200", { rank: 1, title: quotaDiscarded.title });
+  const store = fakeStore(claimed);
+  const result = await collectDue(dependencies({
+    claimed,
+    store,
+    candidatesByCategory: new Map([
+      ["MLB100", [quotaDiscarded, selectedTool]],
+      ["MLB200", [selectedEquivalent]],
+    ]),
+    roundLimit: 2,
+    perNiche: 1,
+  }));
+  assert.equal(result.published, 2);
+  assert.equal(result.rejectedQuota, 1);
+  assert.equal(result.rejectedDuplicate, 0);
+});
+
+test("counts a persisted canonical URL identity separately from a recent item identity", async () => {
+  const claimed = [niche("tools", "MLB100")];
+  const candidate = offer(123, "MLB100", { title: "Furadeira Bosch GSB 13 RE" });
+  const [, canonicalUrlIdentity] = offerIdentities(candidate);
+  const store = fakeStore(claimed, { recent: new Set(["item:MLB999", canonicalUrlIdentity]) });
+  const result = await collectDue(dependencies({
+    claimed,
+    store,
+    candidatesByCategory: new Map([["MLB100", [candidate]]]),
+  }));
+  assert.equal(result.rejectedUrl, 1);
+  assert.equal(result.rejectedRecent, 0);
+  assert.equal(result.rejectedFingerprint, 0);
+  assert.equal(result.published, 0);
+});
+
 test("reserves before affiliate and card creation then sends card base64 and finalizes only after acknowledgement", async () => {
   const claimed = [niche("games", "MLB100")];
   const candidate = offer(1, "MLB100");

@@ -397,3 +397,14 @@ test("rejects non-positive and otherwise invalid quotas deterministically",()=>{
     {limit:2,perNiche:"2"},
   ]) assert.deepEqual(diversifyOffers(candidates,options),[]);
 });
+
+test("skips selected identity equivalents and advances to the next offer in that niche",()=>{
+  const sharedProduct=`product:${"a".repeat(64)}`;
+  const first={...ranked("tools","MLB101"),identityKeys:["item:MLB101",`url:${"b".repeat(64)}`,sharedProduct]};
+  const equivalent={...ranked("clothing","MLB102"),identityKeys:["item:MLB102",`url:${"c".repeat(64)}`,sharedProduct]};
+  const alternative={...ranked("clothing","MLB103"),rank:2,identityKeys:["item:MLB103",`url:${"d".repeat(64)}`,`product:${"e".repeat(64)}`]};
+  assert.deepEqual(
+    diversifyOffers([first,equivalent,alternative],{limit:2,perNiche:1}).map(offer=>offer.itemId),
+    ["MLB101","MLB103"],
+  );
+});
