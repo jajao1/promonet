@@ -65,6 +65,25 @@ async function pixelAt(buffer, x, y) {
   return [...data.subarray(offset, offset + 3)];
 }
 
+async function longestHorizontalRun(buffer, predicate, area) {
+  const { data, info } = await sharp(buffer).raw().toBuffer({ resolveWithObject: true });
+  let longest = null;
+  for (let y = area.top; y < area.top + area.height; y += 1) {
+    let start = null;
+    for (let x = area.left; x <= area.left + area.width; x += 1) {
+      const offset = (y * info.width + x) * info.channels;
+      const matches = x < area.left + area.width && predicate(data[offset], data[offset + 1], data[offset + 2]);
+      if (matches && start === null) start = x;
+      if (!matches && start !== null) {
+        const run = { left: start, right: x - 1, length: x - start, y };
+        if (!longest || run.length > longest.length) longest = run;
+        start = null;
+      }
+    }
+  }
+  return longest;
+}
+
 const offer = {
   title: "Console de videogame com dois controles",
   price: 379.9,
@@ -223,6 +242,39 @@ test("keeps long unbroken title tokens inside the footer margin", async () => {
   const title = await findColorBounds(card, (r, g, b) => r > 225 && g > 225 && b > 225, { left: 50, top: 885, width: 1030, height: 85 });
   assert.ok(title && title.left >= 63);
   assert.ok(title.left + title.width <= 1017, "title remains inside the 64px horizontal margin");
+});
+
+test("keeps multiple wide title tokens inside the footer margin", async () => {
+  const source = await solid(200, 200, "#10aee5");
+  const wideToken = "W".repeat(23);
+  const card = await composeOfferCard({ ...offer, title: `${wideToken} ${wideToken} ${wideToken}` }, { fetch: fetching(source), logoPath });
+  const title = await findColorBounds(card, (r, g, b) => r > 225 && g > 225 && b > 225, { left: 50, top: 885, width: 1030, height: 85 });
+  assert.ok(title && title.left >= 63);
+  assert.ok(title.left + title.width <= 1017, "proportional wide glyphs remain inside the 64px horizontal margin");
+});
+
+test("renders a struck prior price when a valid discount rounds below one percent", async () => {
+  const source = await solid(200, 200, "#10aee5");
+  const card = await composeOfferCard({ ...offer, price: 100, originalPrice: 100.4 }, { fetch: fetching(source), logoPath });
+  const prior = await findColorBounds(card, (r, g, b) => r > 120 && r < 220 && Math.abs(r - g) < 25 && Math.abs(g - b) < 25, { left: 50, top: 965, width: 500, height: 45 });
+  const strike = await longestHorizontalRun(card, (r, g, b) => r > 120 && r < 220 && Math.abs(r - g) < 25 && Math.abs(g - b) < 25, { left: 50, top: 982, width: 500, height: 14 });
+  assert.ok(prior && prior.width > 100, "valid prior price remains visible");
+  assert.ok(strike && strike.length > 120, "prior price has a continuous strike-through");
+});
+
+test("bounds commercial prices and keeps the largest supported price inside the footer", async () => {
+  const source = await solid(200, 200, "#10aee5");
+  const fetch = fetching(source);
+  const maximum = 99_999_999.99;
+  const card = await composeOfferCard({ ...offer, price: maximum, originalPrice: null }, { fetch, logoPath });
+  const currentPrice = await findColorBounds(card, (r, g, b) => r > 225 && g > 225 && b > 225, { left: 50, top: 1005, width: 1030, height: 70 });
+  assert.ok(currentPrice && currentPrice.left >= 63);
+  assert.ok(currentPrice.left + currentPrice.width <= 1017, "maximum supported current price remains inside the 64px horizontal margin");
+
+  for (const invalidOffer of [
+    { ...offer, price: Number.MAX_VALUE },
+    { ...offer, originalPrice: Number.MAX_VALUE },
+  ]) await assert.rejects(composeOfferCard(invalidOffer, { fetch, logoPath }), INVALID);
 });
 
 test("renders valid no-discount offers without a prior-price badge", async () => {

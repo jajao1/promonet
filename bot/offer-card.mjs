@@ -7,6 +7,9 @@ const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_LOGO_BYTES = 2 * 1024 * 1024;
 const MAX_INPUT_PIXELS = 40_000_000;
 const MAX_INPUT_DIMENSION = 10_000;
+const MAX_COMMERCIAL_PRICE = 99_999_999.99;
+const TEXT_PROBE_WIDTH = 4096;
+const TEXT_MAX_WIDTH = 944;
 const CANVAS = "#f7f8f7";
 const SAFE_IMAGE_FORMATS = new Set(["jpeg", "png", "webp", "gif", "avif"]);
 const SAFE_LOGO_FORMATS = new Set(["jpeg", "png", "webp"]);
@@ -96,10 +99,10 @@ export async function downloadProductImage(url, { fetch = globalThis.fetch } = {
 
 function validateOffer(offer) {
   if (!offer || typeof offer !== "object" || typeof offer.title !== "string" || !offer.title.trim() ||
-      offer.title.length > 500 || !Number.isFinite(offer.price) || offer.price <= 0 ||
+      offer.title.length > 500 || !Number.isFinite(offer.price) || offer.price <= 0 || offer.price > MAX_COMMERCIAL_PRICE ||
       typeof offer.imageUrl !== "string") throw invalid();
   if (offer.originalPrice !== null && offer.originalPrice !== undefined &&
-      (!Number.isFinite(offer.originalPrice) || offer.originalPrice <= 0)) throw invalid();
+      (!Number.isFinite(offer.originalPrice) || offer.originalPrice <= 0 || offer.originalPrice > MAX_COMMERCIAL_PRICE)) throw invalid();
 }
 
 async function loadLogo(logoPath) {
@@ -112,32 +115,77 @@ async function loadLogo(logoPath) {
   return buffer;
 }
 
-function titleLines(title) {
-  const words = title.trim().replace(/\s+/g, " ").split(" ").map((word) =>
-    word.length > 24 ? `${word.slice(0, 23)}…` : word);
-  const lines = [""];
-  for (const word of words) {
-    const line = lines.at(-1);
-    if (!line || `${line} ${word}`.length <= 43) lines[lines.length - 1] = line ? `${line} ${word}` : word;
-    else if (lines.length === 1) lines.push(word);
-    else {
-      lines[1] = `${lines[1]} ${word}`;
-    }
-  }
-  if (lines[1]?.length > 47) lines[1] = `${lines[1].slice(0, 46).trimEnd()}…`;
-  return lines.slice(0, 2);
+async function measureText(text, { fontSize, fontWeight }) {
+  const height = Math.ceil(fontSize * 2);
+  const baseline = Math.ceil(fontSize * 1.45);
+  const svg = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${TEXT_PROBE_WIDTH}" height="${height}"><text x="2" y="${baseline}" font-family="Arial, 'DejaVu Sans', sans-serif" font-size="${fontSize}" font-weight="${fontWeight}" fill="white">${escapeSvg(text)}</text></svg>`);
+  const { info } = await sharp(svg).trim().png().toBuffer({ resolveWithObject: true });
+  return info.width;
 }
 
-function overlaySvg(offer) {
-  const discount = Number.isFinite(offer.originalPrice) && offer.originalPrice > offer.price
-    ? Math.round((offer.originalPrice - offer.price) / offer.originalPrice * 100)
-    : 0;
-  const lines = titleLines(offer.title).map(escapeSvg);
+async function truncateToWidth(text, maximumWidth, style) {
+  const characters = Array.from(text);
+  const suffix = "…";
+  let low = 0;
+  let high = characters.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    const candidate = `${characters.slice(0, middle).join("").trimEnd()}${suffix}`;
+    if (await measureText(candidate, style) <= maximumWidth) low = middle;
+    else high = middle - 1;
+  }
+  if (low === 0 && await measureText(suffix, style) > maximumWidth) throw invalid();
+  return `${characters.slice(0, low).join("").trimEnd()}${suffix}`;
+}
+
+async function titleLines(title) {
+  const style = { fontSize: 38, fontWeight: 700 };
+  const normalized = title.trim().replace(/\s+/g, " ");
+  if (await measureText(normalized, style) <= TEXT_MAX_WIDTH) return [normalized];
+
+  const words = normalized.split(" ");
+  let low = 0;
+  let high = words.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (await measureText(words.slice(0, middle).join(" "), style) <= TEXT_MAX_WIDTH) low = middle;
+    else high = middle - 1;
+  }
+
+  const firstLine = low > 0
+    ? words.slice(0, low).join(" ")
+    : await truncateToWidth(words[0], TEXT_MAX_WIDTH, style);
+  const remaining = words.slice(Math.max(low, 1)).join(" ");
+  if (!remaining) return [firstLine];
+  const secondLine = await measureText(remaining, style) <= TEXT_MAX_WIDTH
+    ? remaining
+    : await truncateToWidth(remaining, TEXT_MAX_WIDTH, style);
+  return [firstLine, secondLine];
+}
+
+async function fittingFontSize(text, preferred, minimum, fontWeight) {
+  let fontSize = preferred;
+  const measured = await measureText(text, { fontSize, fontWeight });
+  if (measured > TEXT_MAX_WIDTH) fontSize = Math.max(minimum, Math.floor(fontSize * TEXT_MAX_WIDTH / measured));
+  while (fontSize >= minimum && await measureText(text, { fontSize, fontWeight }) > TEXT_MAX_WIDTH) fontSize -= 1;
+  if (fontSize < minimum) throw invalid();
+  return fontSize;
+}
+
+async function overlaySvg(offer) {
+  const hasPriorPrice = Number.isFinite(offer.originalPrice) && offer.originalPrice > offer.price;
+  const discount = hasPriorPrice ? (offer.originalPrice - offer.price) / offer.originalPrice * 100 : 0;
+  const roundedDiscount = Math.round(discount);
+  const lines = (await titleLines(offer.title)).map(escapeSvg);
   const currentPrice = escapeSvg(money.format(offer.price));
-  const priorPrice = discount ? escapeSvg(money.format(offer.originalPrice)) : "";
-  const badge = discount ? `<g><rect x="814" y="48" width="218" height="70" rx="35" fill="#36f35b"/><text x="923" y="94" text-anchor="middle" class="badge">${escapeSvg(`${discount}% OFF`)}</text></g>` : "";
+  const priorText = hasPriorPrice ? `De ${money.format(offer.originalPrice)}` : "";
+  const currentFontSize = await fittingFontSize(money.format(offer.price), 65, 44, 900);
+  const priorWidth = hasPriorPrice ? await measureText(priorText, { fontSize: 27, fontWeight: 500 }) : 0;
+  if (priorWidth > TEXT_MAX_WIDTH) throw invalid();
+  const badgeText = escapeSvg(roundedDiscount < 1 ? "<1% OFF" : `${roundedDiscount}% OFF`);
+  const badge = hasPriorPrice ? `<g><rect x="814" y="48" width="218" height="70" rx="35" fill="#36f35b"/><text x="923" y="94" text-anchor="middle" class="badge">${badgeText}</text></g>` : "";
   const secondLine = lines[1] ? `<text x="64" y="958" class="title">${lines[1]}</text>` : "";
-  const prior = discount ? `<text x="66" y="997" class="prior">De ${priorPrice}</text><line x1="65" y1="988" x2="285" y2="988" stroke="#aeb7b1" stroke-width="4"/>` : "";
+  const prior = hasPriorPrice ? `<text x="66" y="997" class="prior">${escapeSvg(priorText)}</text><line x1="65" y1="988" x2="${Math.ceil(66 + priorWidth)}" y2="988" stroke="#aeb7b1" stroke-width="4"/>` : "";
   return Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1080" viewBox="0 0 1080 1080">
     <style>
       text { font-family: Arial, "DejaVu Sans", sans-serif; }
@@ -145,9 +193,9 @@ function overlaySvg(offer) {
       .brand-accent { fill: #17a93e; }
       .badge { font-size: 29px; font-weight: 900; fill: #101512; }
       .label { font-size: 21px; font-weight: 800; fill: #36f35b; letter-spacing: 2px; }
-      .title { font-size: 38px; font-weight: 750; fill: #f7f8f7; }
+      .title { font-size: 38px; font-weight: 700; fill: #f7f8f7; }
       .prior { font-size: 27px; font-weight: 500; fill: #aeb7b1; }
-      .price { font-size: 65px; font-weight: 900; fill: #ffffff; letter-spacing: -2px; }
+      .price { font-weight: 900; fill: #ffffff; letter-spacing: -2px; }
     </style>
     <text x="172" y="84" class="brand">Promo<tspan class="brand-accent">Mega</tspan></text>
     <text x="173" y="112" font-size="17" font-weight="700" fill="#59635d" letter-spacing="1.6">OFERTAS DE VERDADE</text>
@@ -158,7 +206,7 @@ function overlaySvg(offer) {
     <text x="64" y="920" class="title">${lines[0]}</text>
     ${secondLine}
     ${prior}
-    <text x="64" y="1060" class="price">${currentPrice}</text>
+    <text x="64" y="1060" class="price" font-size="${currentFontSize}">${currentPrice}</text>
   </svg>`);
 }
 
@@ -188,12 +236,12 @@ export async function composeOfferCard(offer, { fetch = globalThis.fetch, logoPa
       downloadProductImage(offer.imageUrl, { fetch }),
       loadLogo(logoPath),
     ]);
-    const [productLayer, logoLayer] = await Promise.all([renderProduct(source), renderLogo(logo)]);
+    const [productLayer, logoLayer, overlayLayer] = await Promise.all([renderProduct(source), renderLogo(logo), overlaySvg(offer)]);
     return await sharp({ create: { width: 1080, height: 1080, channels: 3, background: CANVAS } })
       .composite([
         { input: productLayer, left: 130, top: 180 },
         { input: logoLayer, left: 44, top: 28 },
-        { input: overlaySvg(offer), left: 0, top: 0 },
+        { input: overlayLayer, left: 0, top: 0 },
       ])
       .jpeg({ quality: 88, chromaSubsampling: "4:4:4" })
       .toBuffer();
