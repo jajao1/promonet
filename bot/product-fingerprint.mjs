@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 const SALES_NOISE = new Set([
-  "da", "das", "de", "do", "dos", "e", "em", "com", "para",
+  "da", "das", "de", "do", "dos", "e", "em", "com",
   "desconto", "descontos", "envio", "entrega", "frete", "gratis",
   "imperdivel", "imperdiveis", "novo", "nova", "novos", "novas",
   "oferta", "ofertas", "original", "promocao", "promocoes",
@@ -27,13 +27,18 @@ const APPAREL_SIZES = new Set([
   "pp", "p", "m", "g", "gg", "xg", "xgg", "xl", "xxl",
 ]);
 
+const PRODUCT_NOUNS = new Set([
+  "adaptador", "aspirador", "bicicleta", "camera", "camiseta", "controle",
+  "controles", "fone", "furadeira", "monitor", "notebook", "smartphone",
+  "tenis", "tv",
+]);
+
 const TRACKING_PARAMETERS = new Set([
   "_gl", "fbclid", "gclid", "mkt_campaign", "mkt_content", "mkt_medium",
   "mkt_source", "mkt_term", "mkt_tool", "ref", "referrer", "tracking",
 ]);
 
 const digest = (value) => createHash("sha256").update(value).digest("hex");
-const marketplaceHost = (hostname) => /(^|\.)mercadolivre\.com\.br$/i.test(hostname);
 const capacity = (token) => /^\d+(?:[.,]\d+)?(?:mb|gb|tb)$/i.test(token);
 const number = (token) => /^\d+(?:[.,]\d+)?$/.test(token);
 
@@ -51,13 +56,14 @@ export function canonicalProductUrl(value) {
 
   const itemPath = /(?:^|\/)MLB-\d+(?:[-_/]|$)/i.test(url.pathname);
   const catalogPath = /(?:^|\/)p\/MLB\d+(?:\/|$)/i.test(url.pathname);
+  const itemRoute = url.hostname === "produto.mercadolivre.com.br" && itemPath;
+  const websiteRoute = url.hostname === "www.mercadolivre.com.br" && (itemPath || catalogPath);
   if (
     url.protocol !== "https:" ||
     url.port ||
     url.username ||
     url.password ||
-    !marketplaceHost(url.hostname) ||
-    (!itemPath && !catalogPath)
+    (!itemRoute && !websiteRoute)
   ) {
     ineligible();
   }
@@ -65,7 +71,11 @@ export function canonicalProductUrl(value) {
   const parameters = [];
   for (const [key, parameterValue] of url.searchParams) {
     const normalizedKey = key.toLowerCase();
-    if (normalizedKey.startsWith("utm_") || TRACKING_PARAMETERS.has(normalizedKey)) continue;
+    if (
+      normalizedKey.startsWith("utm_") ||
+      /^tracking(?:_|$)/.test(normalizedKey) ||
+      TRACKING_PARAMETERS.has(normalizedKey)
+    ) continue;
     parameters.push([normalizedKey, parameterValue]);
   }
   parameters.sort(([leftKey, leftValue], [rightKey, rightValue]) =>
@@ -84,8 +94,10 @@ export function productFingerprint(title) {
     .toLowerCase()
     .normalize("NFD")
     .replace(/\p{M}+/gu, "")
+    .replace(/([\p{L}\p{N}])\+/gu, "$1 plus ")
     .match(/[a-z0-9]+/g) ?? [];
   const apparel = tokens.some((token) => APPAREL.has(token));
+  const productNouns = [];
   const meaningful = [];
 
   for (let index = 0; index < tokens.length; index++) {
@@ -103,11 +115,11 @@ export function productFingerprint(title) {
     }
     if (SALES_NOISE.has(token) || COLORS.has(token) || GENDERS.has(token)) continue;
     if (apparel && (APPAREL_SIZES.has(token) || (/^\d{2}$/.test(token) && Number(token) >= 30 && Number(token) <= 60))) continue;
-    meaningful.push(token);
+    (PRODUCT_NOUNS.has(token) ? productNouns : meaningful).push(token);
   }
 
-  if (meaningful.length < 2) return "";
-  return meaningful.sort().join(" ");
+  if (productNouns.length + meaningful.length < 2) return "";
+  return productNouns.concat(meaningful).join(" ");
 }
 
 export function offerIdentities(offer) {

@@ -49,6 +49,24 @@ test("keeps meaningful bundle quantities distinct", () => {
   );
 });
 
+test("keeps direction-sensitive products distinct", () => {
+  assert.notEqual(
+    productFingerprint("Adaptador HDMI para USB C"),
+    productFingerprint("Adaptador USB C para HDMI"),
+  );
+});
+
+test("normalizes an attached plus symbol without collapsing it into the base model", () => {
+  assert.equal(
+    productFingerprint("Samsung Galaxy S24+ 256GB"),
+    productFingerprint("Samsung Galaxy S24 Plus 128GB"),
+  );
+  assert.notEqual(
+    productFingerprint("Samsung Galaxy S24+ 256GB"),
+    productFingerprint("Samsung Galaxy S24 256GB"),
+  );
+});
+
 test("canonicalizes query ordering and removes fragments and tracking parameters", () => {
   const first = canonicalProductUrl(
     "https://produto.mercadolivre.com.br/MLB-1234567890-item?utm_source=email&variation=2&attributes=COLOR%3Ablue&tracking=abc#recommendation",
@@ -73,6 +91,15 @@ test("canonicalizes catalog URLs while preserving product-defining query values"
   );
 });
 
+test("removes tracking-shaped query parameters", () => {
+  assert.equal(
+    canonicalProductUrl(
+      "https://produto.mercadolivre.com.br/MLB-123-item?tracking_source=feed&variation=7&tracking_id=abc",
+    ),
+    "https://produto.mercadolivre.com.br/MLB-123-item?variation=7",
+  );
+});
+
 test("rejects invalid external and non-product URLs", () => {
   for (const value of [
     "not a url",
@@ -82,6 +109,16 @@ test("rejects invalid external and non-product URLs", () => {
     "https://mercadolivre.com.br.evil.example/MLB-123-item",
     "https://lista.mercadolivre.com.br/tenis",
     "https://www.mercadolivre.com.br/minha-conta",
+  ]) {
+    assert.throws(() => canonicalProductUrl(value), /ineligible_url/);
+  }
+});
+
+test("rejects product-looking paths on search arbitrary and host-mismatched routes", () => {
+  for (const value of [
+    "https://lista.mercadolivre.com.br/MLB-123-item",
+    "https://ofertas.mercadolivre.com.br/MLB-123-item",
+    "https://produto.mercadolivre.com.br/tenis/p/MLB18010993",
   ]) {
     assert.throws(() => canonicalProductUrl(value), /ineligible_url/);
   }
