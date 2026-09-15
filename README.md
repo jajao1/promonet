@@ -290,7 +290,7 @@ Toda publicação usa um card JPEG de 1080×1080, composto localmente com Sharp 
 
 Uma sessão de afiliado expirada abre um incidente persistente com lease e envia um alerta por incidente ao administrador `5543991724961`; novas ofertas permanecem pausadas enquanto a falha continua. Depois que uma conversão autenticada volta a funcionar, o incidente é encerrado e uma expiração futura pode gerar outro alerta. Para substituir a sessão, copie uma nova requisição `createLink`, importe-a com `./scripts/import-meli-session.ps1` e reinicie a ponte e o bot sem registrar cookies nos logs.
 
-Os padrões ficam explícitos em `.env.example`: `COLLECTOR_INTERVAL_MINUTES=20`, `COLLECTOR_TIME_ZONE=America/Sao_Paulo`, `COLLECTOR_START_HOUR=7`, `COLLECTOR_END_HOUR=23`, `COLLECTOR_ROUND_LIMIT=10`, `COLLECTOR_MAX_PER_NICHE=2`, `COLLECTOR_DEDUP_DAYS=7`, `OFFER_CARD_LOGO_PATH=/app/site/logo.jpg` e `ADMIN_WHATSAPP=5543991724961`. `COLLECTOR_SEND_DELAY_MS` continua limitando o espaçamento entre mensagens e usa 15000 ms por padrão.
+Os padrões ficam explícitos em `.env.example`: `COLLECTOR_INTERVAL_MINUTES=20`, `COLLECTOR_TIME_ZONE=America/Sao_Paulo`, `COLLECTOR_START_HOUR=7`, `COLLECTOR_END_HOUR=23`, `COLLECTOR_ROUND_LIMIT=10`, `COLLECTOR_MAX_PER_NICHE=1`, `COLLECTOR_DEDUP_DAYS=7`, `OFFER_CARD_LOGO_PATH=/app/site/logo.jpg` e `ADMIN_WHATSAPP=5543991724961`. `COLLECTOR_SEND_DELAY_MS` continua limitando o espaçamento entre mensagens e usa 15000 ms por padrão.
 
 Valide todas as categorias contra a API oficial antes do deploy sem exibir o token no terminal:
 

@@ -6,7 +6,7 @@ import { categoryByNicheId, categoryBySlug, storefrontCategories } from "../stor
 test("exposes all stable public storefront categories", () => {
   assert.deepEqual(storefrontCategories.map(({ slug }) => slug), [
     "tenis", "roupas", "acessorios-de-moda", "ferramentas", "celulares", "informatica", "games",
-    "eletrodomesticos", "beleza", "esportes", "automotivo", "bebe",
+    "eletrodomesticos", "casa", "beleza", "esportes", "automotivo", "bebe",
   ]);
   assert.deepEqual(categoryBySlug("roupas"), {
     slug: "roupas", nicheId: "clothing", name: "Roupas",
@@ -16,6 +16,7 @@ test("exposes all stable public storefront categories", () => {
   assert.equal(categoryBySlug("acessorios-de-moda").name, "Acessórios de Moda");
   assert.equal(categoryBySlug("ferramentas").name, "Ferramentas");
   assert.equal(categoryBySlug("ferramentas").nicheId, "tools");
+  assert.equal(categoryBySlug("casa").nicheId, "home");
   assert.equal(categoryBySlug("comida"), null);
 });
 

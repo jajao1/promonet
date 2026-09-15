@@ -7,6 +7,7 @@ const definitions = [
   ["informatica", "computing", "Informática", "Promoções de computadores, periféricos e acessórios."],
   ["games", "games", "Games", "Ofertas de consoles, controles, jogos e acessórios gamer."],
   ["eletrodomesticos", "appliances", "Eletrodomésticos", "Promoções de eletrodomésticos para casa e cozinha."],
+  ["casa", "home", "Casa", "Ofertas de móveis, decoração, iluminação, jardim e utilidades para casa."],
   ["beleza", "beauty", "Beleza", "Ofertas de beleza, cuidados pessoais e perfumaria."],
   ["esportes", "sports", "Esportes", "Promoções de artigos esportivos, treino e lazer."],
   ["automotivo", "automotive", "Automotivo", "Ofertas de acessórios, peças e cuidados automotivos."],

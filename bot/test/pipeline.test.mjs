@@ -201,7 +201,7 @@ test("collector configuration uses the approved production defaults", () => {
     startHour: 7,
     endHour: 23,
     roundLimit: 10,
-    maxPerNiche: 2,
+    maxPerNiche: 1,
     dedupDays: 7,
     logoPath: "/app/site/logo.jpg",
     sendDelayMs: 15_000,
@@ -314,7 +314,7 @@ test("collector pipeline injects the configured card schedule limits retention a
   assert.equal(options.signal, signal);
   await options.collect();
   assert.equal(collected.roundLimit, 10);
-  assert.equal(collected.perNiche, 2);
+  assert.equal(collected.perNiche, 1);
   assert.equal(collected.retentionDays, 7);
   assert.equal(collected.sendDelayMs, 15_000);
   assert.equal(await collected.composeCard({ itemId: "MLB1" }), card);
@@ -333,7 +333,7 @@ test("production configuration exposes every collector setting and keeps the log
     COLLECTOR_START_HOUR: "7",
     COLLECTOR_END_HOUR: "23",
     COLLECTOR_ROUND_LIMIT: "10",
-    COLLECTOR_MAX_PER_NICHE: "2",
+    COLLECTOR_MAX_PER_NICHE: "1",
     COLLECTOR_DEDUP_DAYS: "7",
     OFFER_CARD_LOGO_PATH: "/app/site/logo.jpg",
     ADMIN_WHATSAPP: "5543991724961",

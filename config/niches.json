@@ -1,16 +1,17 @@
 {
   "niches": [
-    { "id": "sneakers", "categoryIds": ["MLB23332", "MLB3900", "MLB454734"], "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "maxPerRound": 2, "enabled": true },
-    { "id": "clothing", "categoryIds": ["MLB31447", "MLB107292", "MLB188065"], "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "maxPerRound": 2, "enabled": true },
-    { "id": "fashion-accessories", "categoryIds": ["MLB430275", "MLB190393", "MLB190430"], "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "maxPerRound": 2, "enabled": true },
-    { "id": "tools", "categoryIds": ["MLB189008", "MLB457298", "MLB236055"], "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "maxPerRound": 2, "enabled": true },
-    { "id": "phones", "categoryIds": ["MLB1055"], "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "maxPerRound": 2, "enabled": true },
-    { "id": "computing", "categoryIds": ["MLB1652", "MLB1714", "MLB99245"], "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "maxPerRound": 2, "enabled": true },
-    { "id": "games", "categoryIds": ["MLB11172", "MLB455266", "MLB448170"], "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "maxPerRound": 2, "enabled": true },
-    { "id": "appliances", "categoryIds": ["MLB4337", "MLB9188", "MLB120262"], "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "maxPerRound": 2, "enabled": true },
-    { "id": "beauty", "categoryIds": ["MLB6284", "MLB5412", "MLB29907"], "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "maxPerRound": 2, "enabled": true },
-    { "id": "sports", "categoryIds": ["MLB180269", "MLB6852", "MLB67501"], "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "maxPerRound": 2, "enabled": true },
-    { "id": "automotive", "categoryIds": ["MLB5759", "MLB116489", "MLB186150"], "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "maxPerRound": 2, "enabled": true },
-    { "id": "baby", "categoryIds": ["MLB1386", "MLB1387", "MLB40554"], "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "maxPerRound": 2, "enabled": true }
+    { "id": "sneakers", "categoryIds": ["MLB23332", "MLB3900", "MLB454734"], "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "maxPerRound": 1, "enabled": true },
+    { "id": "clothing", "categoryIds": ["MLB271862"], "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "maxPerRound": 1, "enabled": true },
+    { "id": "fashion-accessories", "categoryIds": ["MLB430275", "MLB190393", "MLB190430"], "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "maxPerRound": 1, "enabled": true },
+    { "id": "tools", "categoryIds": ["MLB189008", "MLB457298", "MLB236055"], "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "maxPerRound": 1, "enabled": true },
+    { "id": "phones", "categoryIds": ["MLB1055"], "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "maxPerRound": 1, "enabled": true },
+    { "id": "computing", "categoryIds": ["MLB1652", "MLB1714", "MLB99245"], "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "maxPerRound": 1, "enabled": true },
+    { "id": "games", "categoryIds": ["MLB11172", "MLB455266", "MLB448170"], "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "maxPerRound": 1, "enabled": true },
+    { "id": "appliances", "categoryIds": ["MLB4337", "MLB9188", "MLB120262"], "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "maxPerRound": 1, "enabled": true },
+    { "id": "home", "categoryIds": ["MLB1613", "MLB264051", "MLB1631", "MLB1582", "MLB1621", "MLB436380", "MLB7069", "MLB436246"], "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "maxPerRound": 1, "enabled": true },
+    { "id": "beauty", "categoryIds": ["MLB6284", "MLB5412", "MLB29907"], "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "maxPerRound": 1, "enabled": true },
+    { "id": "sports", "categoryIds": ["MLB180269", "MLB6852", "MLB67501"], "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "maxPerRound": 1, "enabled": true },
+    { "id": "automotive", "categoryIds": ["MLB5759", "MLB116489", "MLB186150"], "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "maxPerRound": 1, "enabled": true },
+    { "id": "baby", "categoryIds": ["MLB1386", "MLB1387", "MLB40554"], "destinationGroup": "120363411422374407@g.us", "tag": "vijo3432338", "intervalMinutes": 20, "limit": 1, "maxPerRound": 1, "enabled": true }
   ]
 }

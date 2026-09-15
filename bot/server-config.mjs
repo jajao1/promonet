@@ -51,7 +51,7 @@ export function parseCollectorConfig(env) {
     startHour,
     endHour,
     roundLimit: integerSetting(env, "COLLECTOR_ROUND_LIMIT", 10, 1, 10),
-    maxPerNiche: integerSetting(env, "COLLECTOR_MAX_PER_NICHE", 2, 1, 2),
+    maxPerNiche: integerSetting(env, "COLLECTOR_MAX_PER_NICHE", 1, 1, 2),
     dedupDays: integerSetting(env, "COLLECTOR_DEDUP_DAYS", 7, 1, 30),
     logoPath: containerPathSetting(env.OFFER_CARD_LOGO_PATH),
     sendDelayMs: integerSetting(env, "COLLECTOR_SEND_DELAY_MS", 15_000, 1_000, 60_000),

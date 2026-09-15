@@ -43,18 +43,21 @@ test("production config enables clothing and fashion accessories with distinct l
   const niches = validateNiches(config);
   const clothing = niches.find(niche => niche.id === "clothing");
   const accessories = niches.find(niche => niche.id === "fashion-accessories");
+  const home = niches.find(niche => niche.id === "home");
 
-  for (const niche of [clothing, accessories]) {
+  for (const niche of [clothing, accessories, home]) {
     assert.ok(niche);
     assert.equal(niche.enabled, true);
     assert.equal(niche.destinationGroup, "120363411422374407@g.us");
     assert.equal(niche.tag, "vijo3432338");
     assert.equal(niche.intervalMinutes, 20);
     assert.equal(niche.limit, 1);
-    assert.equal(niche.maxPerRound, 2);
+    assert.equal(niche.maxPerRound, 1);
   }
-  assert.deepEqual(clothing.categoryIds, ["MLB31447", "MLB107292", "MLB188065"]);
+  assert.deepEqual(clothing.categoryIds, ["MLB271862"]);
   assert.deepEqual(accessories.categoryIds, ["MLB430275", "MLB190393", "MLB190430"]);
+  assert.deepEqual(home.categoryIds, ["MLB1613", "MLB264051", "MLB1631", "MLB1582", "MLB1621", "MLB436380", "MLB7069", "MLB436246"]);
+  assert.ok(niches.every(niche => niche.maxPerRound === 1));
   assert.ok(!niches.flatMap(niche => niche.categoryIds).includes("MLB1430"));
   assert.equal(new Set(niches.flatMap(niche => niche.categoryIds)).size, niches.flatMap(niche => niche.categoryIds).length);
 });
