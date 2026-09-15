@@ -62,7 +62,7 @@ Add a runtime test that injects `now`, asserts no collection while closed, and a
 
 - [ ] **Step 2: Run the focused tests and verify failure**
 
-Run: `node --test bot/test/collector-schedule.test.mjs bot/test/collector-runtime.test.mjs`  
+Run: `node --test bot/test/collector-schedule.test.mjs bot/test/collector-runtime.test.mjs`
 Expected: FAIL because `collector-schedule.mjs` and window-aware runtime behavior do not exist.
 
 - [ ] **Step 3: Implement the schedule module and runtime cadence**
@@ -87,7 +87,7 @@ Change `runCollectorLoop` to accept `now=()=>new Date()`, `intervalMs=1200000`, 
 
 - [ ] **Step 4: Run focused tests**
 
-Run: `node --test bot/test/collector-schedule.test.mjs bot/test/collector-runtime.test.mjs`  
+Run: `node --test bot/test/collector-schedule.test.mjs bot/test/collector-runtime.test.mjs`
 Expected: PASS, including UTC timestamps that map to the Brasília boundaries.
 
 - [ ] **Step 5: Commit**
@@ -128,7 +128,7 @@ test("canonicalizes Mercado Livre URLs and emits three namespaced keys",()=>{
 
 - [ ] **Step 2: Run the test and verify failure**
 
-Run: `node --test bot/test/product-fingerprint.test.mjs`  
+Run: `node --test bot/test/product-fingerprint.test.mjs`
 Expected: FAIL because the module does not exist.
 
 - [ ] **Step 3: Implement deterministic normalization**
@@ -146,7 +146,7 @@ Keep fingerprint output non-empty only when at least two meaningful tokens remai
 
 - [ ] **Step 4: Run focused tests**
 
-Run: `node --test bot/test/product-fingerprint.test.mjs`  
+Run: `node --test bot/test/product-fingerprint.test.mjs`
 Expected: PASS for equivalent listings and explicit distinct-model cases.
 
 - [ ] **Step 5: Commit**
@@ -176,7 +176,7 @@ assert.match(schema,/collector_incidents/);
 
 - [ ] **Step 2: Run the storage tests and verify failure**
 
-Run: `node --test bot/test/collector-store.test.mjs`  
+Run: `node --test bot/test/collector-store.test.mjs`
 Expected: FAIL because identity reservation and metric methods are absent.
 
 - [ ] **Step 3: Add schema and transactional methods**
@@ -210,7 +210,7 @@ Implement `reserveOffer(keys,{nicheId,itemId,reservationId})` in a database tran
 
 - [ ] **Step 4: Run focused tests**
 
-Run: `node --test bot/test/collector-store.test.mjs`  
+Run: `node --test bot/test/collector-store.test.mjs`
 Expected: PASS, including a simulated overlapping reservation rejection.
 
 - [ ] **Step 5: Commit**
@@ -241,7 +241,7 @@ assert.equal(isFoodOrBeverage({title:"Tênis Nike Revolution",categoryId:"MLB233
 
 - [ ] **Step 2: Run focused tests and verify failure**
 
-Run: `node --test bot/test/niches.test.mjs bot/test/offer-policy.test.mjs`  
+Run: `node --test bot/test/niches.test.mjs bot/test/offer-policy.test.mjs`
 Expected: FAIL because the new categories and quota-aware policy do not exist.
 
 - [ ] **Step 3: Extend validated configuration and selection**
@@ -252,9 +252,9 @@ Do not change the existing requirement that each category appears in only one co
 
 - [ ] **Step 4: Verify configured categories against tests and the official checker**
 
-Run: `node --test bot/test/niches.test.mjs bot/test/offer-policy.test.mjs`  
-Expected: PASS.  
-Run with a valid temporary OAuth token: `npm run verify:categories`  
+Run: `node --test bot/test/niches.test.mjs bot/test/offer-policy.test.mjs`
+Expected: PASS.
+Run with a valid temporary OAuth token: `npm run verify:categories`
 Expected: every configured category reports supported; if a new ID is unsupported, replace it with a verified leaf ID before committing.
 
 - [ ] **Step 5: Commit**
@@ -275,7 +275,7 @@ git commit -m "feat: diversify non-food offer selection"
 
 - [ ] **Step 1: Add Sharp with its lockfile entry**
 
-Run: `npm install sharp@0.34.4 --save-exact`  
+Run: `npm install sharp@0.34.4 --save-exact`
 Expected: `package.json` and `package-lock.json` contain Sharp 0.34.4 and its platform packages.
 
 - [ ] **Step 2: Write failing card tests**
@@ -290,7 +290,7 @@ assert.deepEqual({width:metadata.width,height:metadata.height,format:metadata.fo
 
 - [ ] **Step 3: Run the test and verify failure**
 
-Run: `node --test bot/test/offer-card.test.mjs`  
+Run: `node --test bot/test/offer-card.test.mjs`
 Expected: FAIL because the composer does not exist.
 
 - [ ] **Step 4: Implement bounded download and SVG-overlay composition**
@@ -301,8 +301,8 @@ Return a JPEG buffer at quality 88. Throw `offer_image_invalid` for any fetch, d
 
 - [ ] **Step 5: Run focused tests and ensure the container includes the logo**
 
-Run: `node --test bot/test/offer-card.test.mjs`  
-Expected: PASS.  
+Run: `node --test bot/test/offer-card.test.mjs`
+Expected: PASS.
 Ensure `Dockerfile` retains `COPY --chown=node:node site ./site`, because `/app/site/logo.jpg` is the production logo path.
 
 - [ ] **Step 6: Commit**
@@ -326,7 +326,7 @@ Change SessionAlert tests to inject an incident store with `beginIncident("meli_
 
 - [ ] **Step 2: Run tests and verify failure**
 
-Run: `node --test bot/test/session-alert.test.mjs bot/test/collector-store.test.mjs`  
+Run: `node --test bot/test/session-alert.test.mjs bot/test/collector-store.test.mjs`
 Expected: FAIL because alerts are only process-local.
 
 - [ ] **Step 3: Implement persisted incident transitions**
@@ -342,7 +342,7 @@ Require the incident store in the constructor and update collector call sites to
 
 - [ ] **Step 4: Run focused tests**
 
-Run: `node --test bot/test/session-alert.test.mjs bot/test/collector-store.test.mjs`  
+Run: `node --test bot/test/session-alert.test.mjs bot/test/collector-store.test.mjs`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -374,7 +374,7 @@ assert.ok(result.rejectedFingerprint>0);
 
 - [ ] **Step 2: Run focused tests and verify failure**
 
-Run: `node --test bot/test/collector.test.mjs bot/test/clients.test.mjs`  
+Run: `node --test bot/test/collector.test.mjs bot/test/clients.test.mjs`
 Expected: FAIL because the collector sends original image URLs and lacks reservations/metrics.
 
 - [ ] **Step 3: Refactor one round around candidate pools**
@@ -401,7 +401,7 @@ In `EvolutionClient.send`, require image media to be valid base64 and cap it at 
 
 - [ ] **Step 5: Run focused tests**
 
-Run: `node --test bot/test/collector.test.mjs bot/test/clients.test.mjs`  
+Run: `node --test bot/test/collector.test.mjs bot/test/clients.test.mjs`
 Expected: PASS; no test observes an original product URL being supplied as Evolution media.
 
 - [ ] **Step 6: Commit**
@@ -426,7 +426,7 @@ Add or extend server/pipeline tests for defaults and invalid values: interval 20
 
 - [ ] **Step 2: Run focused tests and verify failure**
 
-Run: `node --test bot/test/pipeline.test.mjs`  
+Run: `node --test bot/test/pipeline.test.mjs`
 Expected: FAIL because the new collector settings are not wired.
 
 - [ ] **Step 3: Parse and inject explicit settings**
@@ -453,7 +453,7 @@ Document the quiet period, no-backlog behavior, category quotas, clothing covera
 
 - [ ] **Step 5: Run focused tests**
 
-Run: `node --test bot/test/pipeline.test.mjs bot/test/session-alert.test.mjs`  
+Run: `node --test bot/test/pipeline.test.mjs bot/test/session-alert.test.mjs`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
@@ -470,7 +470,7 @@ git commit -m "docs: configure scheduled branded collector"
 
 - [ ] **Step 1: Run the complete automated suite**
 
-Run: `npm test`  
+Run: `npm test`
 Expected: all bot and worker tests PASS with zero failures.
 
 - [ ] **Step 2: Run static and configuration checks**
@@ -519,5 +519,5 @@ Write a generated test card to a temporary path using the tested composer, inspe
 
 - [ ] **Step 6: Review repository state and commit verification fixes if any**
 
-Run: `git status --short` and `git diff --check`  
+Run: `git status --short` and `git diff --check`
 Expected: no unexpected files, whitespace errors, cookies, tokens, QR codes, or generated card artifacts. If a verification-only correction was required, commit it as `fix: complete collector quality verification`.
