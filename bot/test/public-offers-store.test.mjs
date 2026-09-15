@@ -43,7 +43,7 @@ test("returns populated categories, destination, and records an anonymous click"
     [],
   ]);
   const store = new PublicOffersStore(db);
-  assert.deepEqual(await store.categories(), [{ id: "games", count: 3 }]);
+  assert.deepEqual(await store.categories(), [{ id: "games", slug: "games", name: "Games", count: 3 }]);
   assert.equal(await store.findDestination("games", "MLB1"), "https://meli.la/abc");
   await store.recordClick("games", "MLB1", "request-id", "google.com");
   assert.match(db.calls[2].text, /INSERT INTO promonet\.offer_clicks/);
@@ -97,11 +97,26 @@ test("maps internal niche ids to stable Portuguese public slugs", async () => {
   assert.equal(offer.category, "roupas");
   assert.equal(offer.redirectUrl, "/oferta/roupas/MLB9");
   assert.equal((await store.listSitemapCategories())[0].slug, "acessorios-de-moda");
-  assert.deepEqual(await store.categories(), [{ id: "acessorios-de-moda", count: 2 }]);
+  assert.deepEqual(await store.categories(), [{ id: "acessorios-de-moda", slug: "acessorios-de-moda", name: "Acessórios de Moda", count: 2 }]);
 });
 
 test("translates a public fashion slug before filtering database niches", async () => {
   const db = database([[]]);
   await new PublicOffersStore(db).list({ category: "roupas" });
   assert.equal(db.calls[0].values[1], "clothing");
+});
+
+test("omits unmapped internal niches instead of exposing dead public routes",async()=>{
+  const row={niche_id:"unknown",item_id:"MLBX",title:"Unknown",price:"10",original_price:"20",published_at:"2026-09-14T12:00:00Z",total_count:"1"};
+  const db=database([
+    [row],
+    [{id:"unknown",count:"1"}],
+    [{niche_id:"unknown",latest_at:"2026-09-14T12:00:00Z"}],
+    [{niche_id:"unknown",item_id:"MLBX",published_at:"2026-09-14T12:00:00Z"}],
+  ]);
+  const store=new PublicOffersStore(db,{now:()=>new Date("2026-09-14T12:00:00Z")});
+  assert.deepEqual(await store.list(),{items:[],total:0,page:1,limit:24});
+  assert.deepEqual(await store.categories(),[]);
+  assert.deepEqual(await store.listSitemapCategories(),[]);
+  assert.deepEqual(await store.listSitemapOffers(),[]);
 });

@@ -9,7 +9,6 @@ const elements = {
   whatsApps: document.querySelectorAll(".whatsapp-link"), heroTotal: document.querySelector("#hero-total"),
 };
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
-const categoryNames = { tenis: "Tênis", roupas: "Roupas", "acessorios-de-moda": "Acessórios de Moda", ferramentas: "Ferramentas", celulares: "Celulares", informatica: "Informática", games: "Games", eletrodomesticos: "Eletrodomésticos", beleza: "Beleza", esportes: "Esportes", automotivo: "Automotivo", bebe: "Bebê" };
 
 function discount(item) {
   return Number.isFinite(item.originalPrice) && item.originalPrice > item.price
@@ -85,8 +84,8 @@ async function loadCategories() {
     const { categories } = await response.json();
     const home = document.createElement("a"); home.href = "/"; home.className = "category-chip"; home.dataset.category = ""; home.textContent = "Em alta";
     const links = categories.map((category) => {
-      const link = document.createElement("a"); link.href = `/categoria/${category.id}`; link.className = "category-chip";
-      link.dataset.category = category.id; link.textContent = `${categoryNames[category.id] ?? category.id} (${category.count})`;
+      const link = document.createElement("a"); link.href = `/categoria/${category.slug}`; link.className = "category-chip";
+      link.dataset.category = category.slug; link.textContent = `${category.name} (${category.count})`;
       return link;
     });
     elements.categories.replaceChildren(home, ...links);

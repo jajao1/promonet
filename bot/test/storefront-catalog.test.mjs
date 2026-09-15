@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { categoryBySlug, storefrontCategories } from "../storefront-catalog.mjs";
+import { readFile } from "node:fs/promises";
+import { categoryByNicheId, categoryBySlug, storefrontCategories } from "../storefront-catalog.mjs";
 
 test("exposes all stable public storefront categories", () => {
   assert.deepEqual(storefrontCategories.map(({ slug }) => slug), [
@@ -16,4 +17,10 @@ test("exposes all stable public storefront categories", () => {
   assert.equal(categoryBySlug("ferramentas").name, "Ferramentas");
   assert.equal(categoryBySlug("ferramentas").nicheId, "tools");
   assert.equal(categoryBySlug("comida"), null);
+});
+
+test("maps every enabled production niche to a public storefront category",async()=>{
+  const config=JSON.parse(await readFile(new URL("../../config/niches.json",import.meta.url),"utf8"));
+  for(const niche of config.niches.filter(({enabled})=>enabled))
+    assert.ok(categoryByNicheId(niche.id),niche.id);
 });

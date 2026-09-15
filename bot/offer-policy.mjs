@@ -6,12 +6,15 @@ const FOOD_TITLE_SIGNALS = [
   "biscoito", "bolacha", "carne", "frango", "farinha", "azeite", "molho",
   "cereal", "salgadinho", "queijo", "mussarela", "manteiga", "margarina",
   "iogurte", "presunto", "mortadela", "salame", "bacon", "ovos", "achocolatado",
-  "bombom", "bombons", "racao",
+  "bombom", "bombons", "racao", "acai", "sorvete", "linguica", "bala", "mel",
+  "oleo", "sal",
 ];
 
 const CONTEXTUAL_FOOD_PHRASES = [
   /(?:^| )agua (?:mineral|com gas)(?: |$)/,
   /(?:^| )agua de coco(?: |$)/,
+  /(?:^| )oleo de soja(?: |$)/,
+  /(?:^| )sal refinado(?: |$)/,
   /(?:^| )hamburguer(?:es)?(?: |$)/,
   /(?:^| )cafe (?:torrado|moido|em graos|soluvel|em capsulas?)(?: |$)/,
   /(?:^| )leite (?:integral|desnatado|semidesnatado|em po|condensado|zero lactose)(?: |$)/,
@@ -25,24 +28,21 @@ const CONTEXTUAL_FOOD_PHRASES = [
 ];
 
 const AMBIGUOUS_FOOD_TITLE_SIGNALS = ["cafe", "leite", "vinho", "chocolate"];
-const FASHION_TITLE_SIGNALS = new Set([
+const NON_FOOD_HEAD_SIGNALS = new Set([
+  "moedor", "espremedor", "maquina", "porta", "fatiador", "adega", "espumador",
+  "taca", "caneca", "jarra", "forma", "pote", "galheteiro", "cafeteira", "chaleira",
+  "panela", "acucareiro", "bebedouro", "alimentador", "capacete",
   "camiseta", "camisa", "vestido", "sapato", "tenis", "body", "blusa", "calca",
   "bermuda", "short", "saia", "casaco", "jaqueta", "moletom", "sandalia",
   "chinelo", "bolsa", "bone", "chapeu", "cinto", "gravata", "roupa",
 ]);
-
-const NON_FOOD_PRODUCT_PATTERNS = [
-  /(?:^| )moedor(?: eletrico)? de carne(?: |$)/,
-  /(?:^| )espremedor(?: eletrico| industrial)? de suco(?: |$)/,
-  /(?:^| )maquina(?: eletrica)? de pao(?: |$)/,
-  /(?:^| )porta ovos(?: |$)/,
-  /(?:^| )fatiador(?: eletrico)? de queijo(?: |$)/,
-  /(?:^| )adega porta vinho(?: |$)/,
-];
+const FOOD_HEAD_SIGNALS = new Set([...FOOD_TITLE_SIGNALS, ...AMBIGUOUS_FOOD_TITLE_SIGNALS]);
+const UNIT_EVIDENCE = /(?:^| )\d+(?:g|kg|ml|l)(?: |$)/;
 
 function normalizedWords(value) {
   return typeof value === "string"
-    ? value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
+    ? value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase()
+      .replace(/\+/g, " plus ").replace(/[^a-z0-9]+/g, " ").trim()
     : "";
 }
 
@@ -51,19 +51,17 @@ export function isFoodOrBeverage(offer) {
   if (isFoodCategoryId(offer.categoryId) || isFoodCategoryId(offer.scopeCategoryId) ||
       isFoodCategoryId(offer.requestedCategoryId)) return true;
 
-  let title = normalizedWords(offer.title);
+  const title = normalizedWords(offer.title);
   if (!title) return false;
-  title = title
-    .replace(/(?:^| )cafe racer(?: |$)/g, " ")
-    .replace(/(?:^| )panela(?: eletrica)? (?:de|para) arroz(?: |$)/g, " ");
-  for (const pattern of NON_FOOD_PRODUCT_PATTERNS) title = title.replace(pattern, " ");
-  const tokens = new Set(title.trim().split(/\s+/).filter(Boolean));
-  if (FOOD_TITLE_SIGNALS.some(signal => tokens.has(signal)) ||
-      CONTEXTUAL_FOOD_PHRASES.some(pattern => pattern.test(title))) return true;
-  const ambiguousFood = AMBIGUOUS_FOOD_TITLE_SIGNALS.some(signal => tokens.has(signal));
-  if (!ambiguousFood) return false;
-  if ([...tokens].some(token => FASHION_TITLE_SIGNALS.has(token))) return false;
-  return true;
+  const words = title.split(/\s+/);
+  const tokens = new Set(words);
+  const hasFoodToken = FOOD_TITLE_SIGNALS.some(signal => tokens.has(signal)) ||
+    AMBIGUOUS_FOOD_TITLE_SIGNALS.some(signal => tokens.has(signal));
+  const hasFoodPhrase = CONTEXTUAL_FOOD_PHRASES.some(pattern => pattern.test(title));
+  if (hasFoodPhrase || FOOD_HEAD_SIGNALS.has(words[0]) ||
+      (tokens.has("plus") && hasFoodToken) || (UNIT_EVIDENCE.test(title) && hasFoodToken)) return true;
+  if (NON_FOOD_HEAD_SIGNALS.has(words[0]) && hasFoodToken) return false;
+  return hasFoodToken;
 }
 
 export function isEligibleOffer(candidate, { categoryId, recentIds = new Set() } = {}) {

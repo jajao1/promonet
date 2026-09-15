@@ -1,7 +1,6 @@
 import { categoryByNicheId, categoryBySlug } from "./storefront-catalog.mjs";
 
 const number = (value) => value == null ? null : Number(value);
-const publicSlug = (nicheId) => categoryByNicheId(nicheId)?.slug ?? nicheId;
 
 export class PublicOffersStore {
   constructor(db, { now = () => new Date() } = {}) { this.db = db; this.now = now; }
@@ -27,7 +26,8 @@ export class PublicOffersStore {
     const safeLimit = Math.min(48, Math.max(1, Number(limit) || 24));
     const safePage = Math.max(1, Number(page) || 1);
     const search = query ? `%${query}%` : "";
-    const nicheId = categoryBySlug(category)?.nicheId ?? category;
+    const nicheId = category ? categoryBySlug(category)?.nicheId : "";
+    if (category && !nicheId) return { items: [], total: 0, page: safePage, limit: safeLimit };
     const order = sort === "discount"
       ? `(CASE WHEN p.original_price > p.price THEN (p.original_price-p.price)/p.original_price ELSE 0 END) DESC, pub.published_at DESC`
       : "pub.published_at DESC";
@@ -46,9 +46,10 @@ export class PublicOffersStore {
       AND ($2 = '' OR p.niche_id = $2)
     ORDER BY ${order}
     LIMIT $4 OFFSET $5`, [search, nicheId, this.activeSince(), safeLimit, (safePage - 1) * safeLimit]);
+    const items = result.rows.map((row) => this.mapOffer(row)).filter(Boolean);
     return {
-      items: result.rows.map((row) => this.mapOffer(row)),
-      total: Number(result.rows[0]?.total_count ?? 0),
+      items,
+      total: items.length === result.rows.length ? Number(result.rows[0]?.total_count ?? 0) : items.length,
       page: safePage,
       limit: safeLimit,
     };
@@ -62,7 +63,10 @@ export class PublicOffersStore {
         WHERE pub.niche_id=p.niche_id AND pub.item_id=p.item_id AND pub.published_at >= $1
       )
       GROUP BY p.niche_id ORDER BY p.niche_id`, [this.activeSince()]);
-    return result.rows.map((row) => ({ id: publicSlug(row.id), count: Number(row.count) }));
+    return result.rows.flatMap((row) => {
+      const category = categoryByNicheId(row.id);
+      return category ? [{ id: category.slug, slug: category.slug, name: category.name, count: Number(row.count) }] : [];
+    });
   }
 
   async listCategory(category, { page = 1, limit = 24 } = {}) {
@@ -81,19 +85,22 @@ export class PublicOffersStore {
     WHERE p.state='published' AND p.niche_id=$1
     ORDER BY pub.published_at DESC LIMIT $3 OFFSET $4`,
     [category, this.activeSince(), safeLimit, (safePage - 1) * safeLimit]);
+    const items = result.rows.map((row) => this.mapOffer(row)).filter(Boolean);
     return {
-      items: result.rows.map((row) => this.mapOffer(row)),
-      total: Number(result.rows[0]?.total_count ?? 0), page: safePage, limit: safeLimit,
+      items,
+      total: items.length === result.rows.length ? Number(result.rows[0]?.total_count ?? 0) : items.length,
+      page: safePage, limit: safeLimit,
     };
   }
 
   mapOffer(row) {
-    const category = publicSlug(row.niche_id);
+    const category = categoryByNicheId(row.niche_id);
+    if (!category) return null;
     return {
-      category, itemId: row.item_id, title: row.title,
+      category: category.slug, itemId: row.item_id, title: row.title,
       price: number(row.price), originalPrice: number(row.original_price), imageUrl: row.image_url,
       publishedAt: row.published_at,
-      redirectUrl: `/oferta/${encodeURIComponent(category)}/${encodeURIComponent(row.item_id)}`,
+      redirectUrl: `/oferta/${encodeURIComponent(category.slug)}/${encodeURIComponent(row.item_id)}`,
     };
   }
 
@@ -110,7 +117,8 @@ export class PublicOffersStore {
     if (!row) return null;
     const status = !row.published_at || !row.affiliate_url ? "unavailable"
       : new Date(row.published_at) < this.activeSince() ? "expired" : "active";
-    return { ...this.mapOffer(row), status, affiliateUrl: row.affiliate_url };
+    const offer = this.mapOffer(row);
+    return offer ? { ...offer, status, affiliateUrl: row.affiliate_url } : null;
   }
 
   async listRelated(nicheId, excludedItemId, limit = 4) {
@@ -123,7 +131,7 @@ export class PublicOffersStore {
       FROM promonet.offer_previews p JOIN latest_publications pub USING(niche_id,item_id)
       WHERE p.state='published' AND p.niche_id=$1 AND p.item_id<>$2
       ORDER BY pub.published_at DESC LIMIT $4`, [nicheId, excludedItemId, this.activeSince(), safeLimit]);
-    return result.rows.map((row) => this.mapOffer(row));
+    return result.rows.map((row) => this.mapOffer(row)).filter(Boolean);
   }
 
   async listSitemapCategories() {
@@ -132,7 +140,10 @@ export class PublicOffersStore {
       JOIN promonet.offer_previews p USING(niche_id,item_id)
       WHERE pub.published_at >= $1 AND p.state='published'
       GROUP BY pub.niche_id ORDER BY pub.niche_id`, [this.activeSince()]);
-    return result.rows.map((row) => ({ slug: publicSlug(row.niche_id), lastModified: new Date(row.latest_at).toISOString() }));
+    return result.rows.flatMap((row) => {
+      const category = categoryByNicheId(row.niche_id);
+      return category ? [{ slug: category.slug, lastModified: new Date(row.latest_at).toISOString() }] : [];
+    });
   }
 
   async listSitemapOffers() {
@@ -141,7 +152,10 @@ export class PublicOffersStore {
       JOIN promonet.offer_previews p USING(niche_id,item_id)
       WHERE pub.published_at >= $1 AND pub.affiliate_url IS NOT NULL AND p.state='published'
       ORDER BY pub.niche_id,pub.item_id,pub.published_at DESC`, [this.activeSince()]);
-    return result.rows.map((row) => ({ category: publicSlug(row.niche_id), itemId: row.item_id, lastModified: new Date(row.published_at).toISOString() }));
+    return result.rows.flatMap((row) => {
+      const category = categoryByNicheId(row.niche_id);
+      return category ? [{ category: category.slug, itemId: row.item_id, lastModified: new Date(row.published_at).toISOString() }] : [];
+    });
   }
 
   async findDestination(nicheId, itemId) {

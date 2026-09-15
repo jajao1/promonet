@@ -10,7 +10,7 @@ test("serves bounded offer queries and categories as public JSON", async () => {
   let options;
   const store = {
     list: async (value) => { options = value; return { items: [], total: 0, page: value.page, limit: value.limit }; },
-    categories: async () => [{ id: "games", count: 2 }],
+    categories: async () => [{ id: "games", slug: "games", name: "Games", count: 2 }],
   };
   const handler = publicSiteHandler({ store });
   const offers = response();
@@ -20,7 +20,7 @@ test("serves bounded offer queries and categories as public JSON", async () => {
   assert.equal(offers.headers["content-type"], "application/json; charset=utf-8");
   const categories = response();
   await handler({ method: "GET", url: "/api/categories" }, categories);
-  assert.deepEqual(JSON.parse(categories.body), { categories: [{ id: "games", count: 2 }] });
+  assert.deepEqual(JSON.parse(categories.body), { categories: [{ id: "games", slug: "games", name: "Games", count: 2 }] });
 });
 
 test("exposes only a valid WhatsApp group invite in public site config", async () => {

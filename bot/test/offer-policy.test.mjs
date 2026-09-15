@@ -89,6 +89,48 @@ test("distinguishes food products from appliances and accessories across niches"
   ]) assert.equal(isFoodOrBeverage(offer),true,offer.title);
 });
 
+const contextualNonFoodTitles=[
+  "Espumador de leite",
+  "Taça para vinho",
+  "Caneca para cerveja",
+  "Jarra para suco",
+  "Forma de pão",
+  "Pote para açúcar",
+  "Galheteiro para azeite",
+  "Cafeteira com moedor de café",
+  "Chaleira com infusor de chá",
+];
+const contextualFoodTitles=[
+  "Açaí tradicional 1kg",
+  "Sorvete de creme 2L",
+  "Linguiça toscana 1kg",
+  "Bala Fini 500g",
+  "Mel puro 500g",
+  "Óleo de soja 900ml",
+  "Sal refinado 1kg",
+];
+
+test("uses product heads and usage-target context for ambiguous food terms",()=>{
+  for(const title of contextualNonFoodTitles)
+    assert.equal(isFoodOrBeverage({title,categoryId:"MLB31447"}),false,title);
+  for(const title of contextualFoodTitles)
+    assert.equal(isFoodOrBeverage({title,categoryId:"MLB31447"}),true,title);
+});
+
+test("applies every contextual fixture through eligibility and diversification",()=>{
+  const candidate=(title,itemId,nicheId)=>({...item,title,itemId,nicheId,categoryId:"MLB31447"});
+  const allowed=contextualNonFoodTitles.map((title,index)=>candidate(title,`ALLOW${index}`,`allowed-${index}`));
+  const rejected=contextualFoodTitles.map((title,index)=>candidate(title,`FOOD${index}`,`food-${index}`));
+  for(const offer of allowed)
+    assert.equal(isEligibleOffer(offer,{categoryId:"MLB31447",recentIds:new Set()}),true,offer.title);
+  for(const offer of rejected)
+    assert.equal(isEligibleOffer(offer,{categoryId:"MLB31447",recentIds:new Set()}),false,offer.title);
+  assert.deepEqual(
+    diversifyOffers([...rejected,...allowed],{limit:10}).map(offer=>offer.itemId),
+    allowed.map(offer=>offer.itemId),
+  );
+});
+
 test("rejects food before selecting an otherwise valid ranked offer while allowing clothing",()=>{
   const clothing={...item,itemId:"MLB2",title:"Camiseta masculina de algodão",categoryId:"MLB31447"};
   const food={...item,itemId:"MLB3",rank:0,title:"Macarrão espaguete 500g",categoryId:"MLB31447"};
