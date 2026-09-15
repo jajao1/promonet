@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { selectOffer, selectOffers, formatOffer } from "../offer-policy.mjs";
+import { diversifyOffers, formatOffer, isFoodOrBeverage, selectOffer, selectOffers } from "../offer-policy.mjs";
 const item={itemId:"MLB1",rank:1,title:"Console",status:"active",permalink:"https://produto.mercadolivre.com.br/MLB-1-console",imageUrl:"https://http2.mlstatic.com/a.jpg",price:100,originalPrice:150,categoryId:"MLB1144"};
 test("selects a valid unseen candidate and prioritizes confirmed discount",()=>{const selected=selectOffer([{...item,itemId:"MLB2",rank:0,originalPrice:null},{...item,rank:5}],{categoryId:"MLB1144",recentIds:new Set()});assert.equal(selected.itemId,"MLB1");});
 test("accepts a child-category offer returned by the requested official category scope",()=>{const selected=selectOffer([{...item,categoryId:"MLB186456",scopeCategoryId:"MLB1144"}],{categoryId:"MLB1144",recentIds:new Set()});assert.equal(selected?.itemId,"MLB1");});
@@ -9,3 +9,69 @@ test("rejects invalid, mismatched and recently published candidates",()=>{for(co
 test("rejects products without a genuine previous price",()=>{assert.equal(selectOffer([{...item,originalPrice:null}],{categoryId:item.categoryId,recentIds:new Set()}),null);assert.equal(selectOffer([{...item,originalPrice:item.price}],{categoryId:item.categoryId,recentIds:new Set()}),null);});
 test("best-seller rank precedes discount",()=>{const selected=selectOffer([{...item,itemId:"MLB1",rank:1,price:80,originalPrice:100},{...item,itemId:"MLB2",rank:8,price:30,originalPrice:100}],{categoryId:item.categoryId,recentIds:new Set()});assert.equal(selected.itemId,"MLB1");});
 test("formats truthful offer disclosure",()=>{const text=formatOffer(item,"https://meli.la/ours");assert.match(text,/Publicidade/);assert.match(text,/R\$\s*150,00/);assert.match(text,/33%/);assert.match(text,/https:\/\/meli\.la\/ours/);assert.doesNotMatch(formatOffer({...item,originalPrice:null},"https://meli.la/ours"),/%/);});
+
+test("identifies food and beverage categories and normalized Portuguese title signals",()=>{
+  for(const title of [
+    "Macarrão espaguete 500g",
+    "Açúcar refinado 1kg",
+    "Refrigerante cola 2 litros",
+    "Café torrado e moído 500g",
+    "Arroz branco tipo 1 5kg",
+    "Bebida láctea sabor chocolate",
+    "Alimento completo para gatos",
+    "Feijão carioca 1kg",
+    "Leite integral 1L",
+    "Chocolate ao leite 90g",
+  ]) assert.equal(isFoodOrBeverage({title,categoryId:"MLB31447"}),true,title);
+  assert.equal(isFoodOrBeverage({title:"Oferta especial",categoryId:"MLB1403"}),true);
+  assert.equal(isFoodOrBeverage({title:"Oferta especial",scopeCategoryId:"MLB278123"}),true);
+});
+
+test("does not confuse bounded food words with appliance, tool, or model names",()=>{
+  for(const title of [
+    "Camiseta masculina de algodão",
+    "Kit de ferramentas Tramontina 110 peças",
+    "Cafeteira elétrica Oster",
+    "Açucareiro de inox",
+    "Bebedouro elétrico de mesa",
+    "Alimentador automático para pets",
+    "Panela elétrica para arroz",
+    "Capacete Custom Café Racer",
+  ]) assert.equal(isFoodOrBeverage({title,categoryId:"MLB31447"}),false,title);
+});
+
+test("rejects food before selecting an otherwise valid ranked offer while allowing clothing",()=>{
+  const clothing={...item,itemId:"MLB2",title:"Camiseta masculina de algodão",categoryId:"MLB31447"};
+  const food={...item,itemId:"MLB3",rank:0,title:"Macarrão espaguete 500g",categoryId:"MLB31447"};
+  assert.equal(selectOffer([food,clothing],{categoryId:"MLB31447",recentIds:new Set()})?.itemId,"MLB2");
+});
+
+const ranked=(nicheId,itemId)=>({...item,nicheId,itemId});
+
+test("rotates across at least five niches and caps every niche at two while filling ten",()=>{
+  const candidates=[
+    ranked("tools","T1"),ranked("tools","T2"),ranked("tools","T3"),ranked("tools","T4"),
+    ranked("clothing","C1"),ranked("clothing","C2"),
+    ranked("sneakers","S1"),ranked("sneakers","S2"),
+    ranked("phones","P1"),ranked("phones","P2"),
+    ranked("games","G1"),ranked("games","G2"),
+    ranked("appliances","A1"),
+  ];
+  const selected=diversifyOffers(candidates,{limit:10,perNiche:2});
+  const counts=selected.reduce((map,offer)=>map.set(offer.nicheId,(map.get(offer.nicheId)??0)+1),new Map());
+  assert.equal(selected.length,10);
+  assert.ok(counts.size>=5);
+  assert.ok([...counts.values()].every(count=>count<=2));
+  assert.deepEqual(selected.map(offer=>offer.itemId),["T1","C1","S1","P1","G1","A1","T2","C2","S2","P2"]);
+});
+
+test("handles sparse niches, invalid niche IDs, and duplicate item IDs deterministically",()=>{
+  const candidates=[
+    ranked("tools","DUP"),ranked("tools","T2"),
+    ranked("","INVALID"),ranked("clothing","DUP"),ranked("clothing","C2"),
+    ranked("games","G1"),ranked(null,"INVALID2"),ranked("games","G1"),
+  ];
+  const expected=["DUP","C2","G1","T2"];
+  assert.deepEqual(diversifyOffers(candidates).map(offer=>offer.itemId),expected);
+  assert.deepEqual(diversifyOffers(candidates).map(offer=>offer.itemId),expected);
+});
