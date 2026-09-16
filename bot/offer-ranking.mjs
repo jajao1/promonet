@@ -1,4 +1,21 @@
 const clamp = value => Math.min(1, Math.max(0, value));
+const RECOGNIZED_BRANDS = new Set([
+  "acer", "adidas", "apple", "asics", "bosch", "boticario", "dewalt", "dell",
+  "electrolux", "fila", "gedore", "lancome", "lenovo", "logitech", "makita",
+  "microsoft", "motorola", "natura", "nike", "nintendo", "olympikus", "oster",
+  "philco", "puma", "reserva", "samsung", "sony", "stanley", "tramontina", "vans", "wap",
+]);
+
+function normalizedBrand(value) {
+  return typeof value === "string"
+    ? value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
+    : "";
+}
+
+function brandBoost(candidate) {
+  const words = normalizedBrand(candidate.brand).split(" ");
+  return words.some(word => RECOGNIZED_BRANDS.has(word)) ? 0.08 : 0;
+}
 
 function normalize(value, minimum, maximum, fallback = 0.5) {
   if (!Number.isFinite(value) || minimum === maximum) return fallback;
@@ -30,7 +47,7 @@ function scoreCategory(candidates) {
     const discountScore = discount(candidate);
     return {
       ...candidate,
-      hybridScore: (0.40 * rankScore) + (0.35 * salesScore) + (0.25 * discountScore),
+      hybridScore: (0.40 * rankScore) + (0.35 * salesScore) + (0.25 * discountScore) + brandBoost(candidate),
     };
   });
 }

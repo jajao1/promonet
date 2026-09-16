@@ -25,6 +25,14 @@ test("uses neutral sales contribution when demand is unavailable", () => {
   assert.deepEqual(rankCategoryOffers(candidates).map(candidate => candidate.itemId), ["RANK_ONE", "RANK_TWO"]);
 });
 
+test("uses an official recognized brand as a bounded tie breaker", () => {
+  const generic = { ...offer("AAA_GENERIC", 1, 500, 70, 100), brand: "Marca Genérica" };
+  const branded = { ...offer("ZZZ_BRANDED", 1, 500, 70, 100), brand: "Nike" };
+  const ranked = rankCategoryOffers([generic, branded]);
+  assert.deepEqual(ranked.map(candidate => candidate.itemId), ["ZZZ_BRANDED", "AAA_GENERIC"]);
+  assert.ok(ranked[0].hybridScore - ranked[1].hybridScore <= 0.1);
+});
+
 test("is deterministic and does not mutate candidates", () => {
   const candidates = [offer("B", 1, 50, 80, 100), offer("A", 1, 50, 80, 100)];
   const snapshot = structuredClone(candidates);
