@@ -230,7 +230,10 @@ export function diversifyOfferPool(candidates, { limit = 10, perNiche = 2, recen
     group.cap = Math.min(group.cap, candidateCap);
   }
 
-  for (const group of groups.values()) group.offers = rankCategoryOffers(group.offers);
+  for (const group of groups.values()) {
+    const originals = new Map(group.offers.map(offer => [offer.itemId, offer]));
+    group.offers = rankCategoryOffers(group.offers).map(offer => originals.get(offer.itemId));
+  }
 
   const cursors = new Map([...groups.keys()].map(nicheId => [nicheId, 0]));
   const selected = [];

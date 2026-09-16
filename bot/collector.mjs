@@ -469,6 +469,7 @@ export async function collectDue({
       try {
         const found = await source.list(state.categoryId, token);
         if (!Array.isArray(found)) throw Error("source_response_invalid");
+        await store.recordOfferSnapshots(state.categoryId, found);
         summary.discovered += found.length;
         state.candidates = found.map((candidate) => ({
           ...candidate,

@@ -52,6 +52,7 @@ function fakeStore(claimed, {
     claimDueNiche: async () => claimed[0] ?? null,
     nextCategory: async (vertical) => vertical.categoryIds[0],
     recentIdentityKeys: async () => new Set(held),
+    recordOfferSnapshots: async (categoryId, candidates) => events.push(["snapshots", categoryId, candidates]),
     reserveOffer: async (keys, options) => {
       events.push(["reserve", options.itemId, keys, options.reservationId]);
       return !reservationRejected.has(options.itemId);
@@ -101,6 +102,34 @@ function dependencies({ claimed, candidatesByCategory, store = fakeStore(claimed
     ...overrides,
   };
 }
+
+test("records every discovered candidate snapshot before eligibility filtering", async () => {
+  const claimed = [niche("tools", "MLB100")];
+  const store = fakeStore(claimed);
+  const candidates = [offer(1, "MLB100"), offer(2, "MLB100", { status: "paused" })];
+  await collectDue(dependencies({
+    claimed, store, dryRun: true,
+    candidatesByCategory: new Map([["MLB100", candidates]]),
+  }));
+  const snapshot = store.events.find(event => event[0] === "snapshots");
+  assert.equal(snapshot[1], "MLB100");
+  assert.deepEqual(snapshot[2], candidates);
+});
+
+test("fails the niche closed when snapshot persistence fails", async () => {
+  const claimed = [niche("tools", "MLB100")];
+  const store = fakeStore(claimed);
+  store.recordOfferSnapshots = async () => { throw Error("database_unavailable"); };
+  let sends = 0;
+  const summary = await collectDue(dependencies({
+    claimed, store,
+    candidatesByCategory: new Map([["MLB100", [offer(1, "MLB100")]]]),
+    evolution: { send: async () => { sends++; return { key: { id: "sent" } }; } },
+  }));
+  assert.equal(sends, 0);
+  assert.equal(summary.failed, 1);
+  assert.ok(store.events.some(event => event[0] === "complete" && event[2] === "source_error"));
+});
 
 test("uses the configured identity retention window", async () => {
   const claimed = [niche("tools", "MLB100")];
