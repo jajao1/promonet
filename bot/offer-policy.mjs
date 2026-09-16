@@ -1,4 +1,5 @@
 import { isFoodCategoryId } from "./category-policy.mjs";
+import { rankCategoryOffers } from "./offer-ranking.mjs";
 
 const FOOD_TITLE_SIGNALS = [
   "macarrao", "acucar", "refrigerante", "arroz", "bebida", "alimento",
@@ -177,9 +178,8 @@ const discount = candidate => Number.isFinite(candidate.originalPrice) && candid
 
 export function selectOffers(candidates, { categoryId, recentIds, limit }) {
   const seen = new Set();
-  return candidates
-    .filter(candidate => isEligibleOffer(candidate, { categoryId, recentIds }) && !seen.has(candidate.itemId) && seen.add(candidate.itemId))
-    .sort(compareOffers)
+  return rankCategoryOffers(candidates
+    .filter(candidate => isEligibleOffer(candidate, { categoryId, recentIds }) && !seen.has(candidate.itemId) && seen.add(candidate.itemId)))
     .slice(0, limit);
 }
 
@@ -202,7 +202,8 @@ function trustedIdentityKeys(candidate) {
 }
 
 export function compareOffers(a, b) {
-  return a.rank - b.rank || discount(b) - discount(a) || a.itemId.localeCompare(b.itemId);
+  return (Number.isFinite(b.hybridScore) ? b.hybridScore : 0) - (Number.isFinite(a.hybridScore) ? a.hybridScore : 0) ||
+    a.rank - b.rank || discount(b) - discount(a) || a.itemId.localeCompare(b.itemId);
 }
 
 export function diversifyOfferPool(candidates, { limit = 10, perNiche = 2, recentIds = new Set() } = {}) {
@@ -229,7 +230,7 @@ export function diversifyOfferPool(candidates, { limit = 10, perNiche = 2, recen
     group.cap = Math.min(group.cap, candidateCap);
   }
 
-  for (const group of groups.values()) group.offers.sort(compareOffers);
+  for (const group of groups.values()) group.offers = rankCategoryOffers(group.offers);
 
   const cursors = new Map([...groups.keys()].map(nicheId => [nicheId, 0]));
   const selected = [];
