@@ -10,6 +10,9 @@ async function getJson(fetch,url,token,{unsupported404=false,optionalForbidden=f
   const bytes=Buffer.from(await response.arrayBuffer());if(bytes.length>1024*1024)throw Error("source_response_invalid");
   try{return JSON.parse(bytes.toString("utf8"));}catch{throw Error("source_response_invalid");}
 }
+function nonnegative(value){return Number.isFinite(value)&&value>=0?value:null;}
+function rating(value){return Number.isFinite(value)&&value>=0&&value<=5?value:null;}
+function popularity(value){return {soldQuantity:nonnegative(value?.sold_quantity),ratingAverage:rating(value?.reviews?.rating_average),reviewCount:nonnegative(value?.reviews?.total)};}
 export class OfficialOfferSource{
   constructor({fetch=globalThis.fetch}={}){this.fetch=fetch;}
   async list(categoryId,token){
@@ -26,7 +29,7 @@ export class OfficialOfferSource{
         const product=await getJson(this.fetch,`https://api.mercadolibre.com/products/${encodeURIComponent(ref.sourceId)}`,token);
         const productItems=await getJson(this.fetch,`https://api.mercadolibre.com/products/${encodeURIComponent(ref.sourceId)}/items`,token);
         const offer=productItems?.results?.[0], picture=product?.pictures?.[0]?.url;
-        if(offer?.item_id&&product?.name&&picture)products.push({...ref,itemId:ref.sourceId,title:product.name,status:product.status,permalink:product.permalink||`https://www.mercadolivre.com.br/p/${ref.sourceId}`,imageUrl:picture.replace(/^http:/,"https:"),price:offer.price,originalPrice:offer.original_price,categoryId:offer.category_id,scopeCategoryId:categoryId});
+        if(offer?.item_id&&product?.name&&picture)products.push({...ref,itemId:ref.sourceId,title:product.name,status:product.status,permalink:product.permalink||`https://www.mercadolivre.com.br/p/${ref.sourceId}`,imageUrl:picture.replace(/^http:/,"https:"),price:offer.price,originalPrice:offer.original_price,categoryId:offer.category_id,scopeCategoryId:categoryId,...popularity(offer)});
         continue;
       }
       const userProduct=await getJson(this.fetch,`https://api.mercadolibre.com/user-products/${encodeURIComponent(ref.sourceId)}`,token,{optionalForbidden:true});
@@ -36,9 +39,9 @@ export class OfficialOfferSource{
     }
     if(!resolved.length)return products;
     const ids=resolved.map(x=>x.itemId).join(",");
-    const details=await getJson(this.fetch,`https://api.mercadolibre.com/items/bulk?ids=${encodeURIComponent(ids)}&attributes=body.id,body.title,body.status,body.permalink,body.thumbnail,body.price,body.original_price,body.category_id`,token);
+    const details=await getJson(this.fetch,`https://api.mercadolibre.com/items/bulk?ids=${encodeURIComponent(ids)}&attributes=body.id,body.title,body.status,body.permalink,body.thumbnail,body.price,body.original_price,body.category_id,body.sold_quantity,body.reviews`,token);
     if(!Array.isArray(details))throw Error("source_response_invalid");
     const byId=new Map(details.filter(x=>(x.status_code??x.code)===200&&x.body?.id).map(x=>[String(x.id??x.body.id),x.body]));
-    return products.concat(resolved.flatMap(ref=>{const body=byId.get(ref.itemId);return body?[{...ref,itemId:String(body.id),title:body.title,status:body.status,permalink:body.permalink,imageUrl:body.thumbnail?.replace(/^http:/,"https:"),price:body.price,originalPrice:body.original_price,categoryId:body.category_id,scopeCategoryId:categoryId}]:[];}));
+    return products.concat(resolved.flatMap(ref=>{const body=byId.get(ref.itemId);return body?[{...ref,itemId:String(body.id),title:body.title,status:body.status,permalink:body.permalink,imageUrl:body.thumbnail?.replace(/^http:/,"https:"),price:body.price,originalPrice:body.original_price,categoryId:body.category_id,scopeCategoryId:categoryId,...popularity(body)}]:[];}));
   }
 }
