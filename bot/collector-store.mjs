@@ -41,6 +41,12 @@ function validText(value) {
   return typeof value === "string" && value.trim().length > 0 && value.length <= 128;
 }
 
+function optionalMetric(value, { integer = false, minimum = 0, maximum = Number.POSITIVE_INFINITY } = {}) {
+  return Number.isFinite(value) && value >= minimum && value <= maximum && (!integer || Number.isSafeInteger(value))
+    ? value
+    : null;
+}
+
 function requireUuid(value, name) {
   if (typeof value !== "string" || !UUID.test(value)) throw Error(`invalid_${name}`);
 }
@@ -176,6 +182,20 @@ CREATE INDEX IF NOT EXISTS offer_identity_keys_reservation_id_idx
   ON promonet.offer_identity_keys(reservation_id) WHERE reservation_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS offer_identity_keys_review_until_idx
   ON promonet.offer_identity_keys(review_until) WHERE review_until IS NOT NULL;
+CREATE TABLE IF NOT EXISTS promonet.offer_metric_snapshots(
+  item_id TEXT NOT NULL,
+  category_id TEXT NOT NULL,
+  observed_at TIMESTAMPTZ NOT NULL,
+  rank INTEGER,
+  sold_quantity INTEGER,
+  price NUMERIC,
+  original_price NUMERIC,
+  rating_average NUMERIC,
+  review_count INTEGER,
+  PRIMARY KEY(item_id,category_id,observed_at)
+);
+CREATE INDEX IF NOT EXISTS offer_metric_snapshots_category_observed_idx
+  ON promonet.offer_metric_snapshots(category_id,observed_at DESC);
 CREATE TABLE IF NOT EXISTS promonet.collector_rounds(
   round_id UUID PRIMARY KEY,
   started_at TIMESTAMPTZ NOT NULL,
@@ -423,6 +443,41 @@ CREATE INDEX IF NOT EXISTS collector_incidents_active_idx
        WHERE published_at>=now()-interval '7 days'`,
     );
     return new Set(result.rows.map((row) => row.item_id));
+  }
+
+  async recordOfferSnapshots(categoryId, candidates, observedAt = new Date()) {
+    if (typeof categoryId !== "string" || !/^MLB\d+$/.test(categoryId)) throw Error("invalid_category_id");
+    if (!(observedAt instanceof Date) || !Number.isFinite(observedAt.getTime())) throw Error("invalid_observed_at");
+    if (!Array.isArray(candidates)) throw Error("invalid_snapshot_candidates");
+    const records = candidates.filter(candidate => candidate && validText(candidate.itemId)).map(candidate => ({
+      itemId: candidate.itemId.trim(),
+      rank: optionalMetric(candidate.rank, { integer: true }),
+      soldQuantity: optionalMetric(candidate.soldQuantity, { integer: true }),
+      price: optionalMetric(candidate.price),
+      originalPrice: optionalMetric(candidate.originalPrice),
+      ratingAverage: optionalMetric(candidate.ratingAverage, { maximum: 5 }),
+      reviewCount: optionalMetric(candidate.reviewCount, { integer: true }),
+    }));
+    if (!records.length) return 0;
+    const bucketMilliseconds = 20 * 60 * 1_000;
+    const bucket = new Date(Math.floor(observedAt.getTime() / bucketMilliseconds) * bucketMilliseconds);
+    const result = await this.db.query(
+      `INSERT INTO promonet.offer_metric_snapshots(
+         item_id,category_id,observed_at,rank,sold_quantity,price,original_price,rating_average,review_count
+       )
+       SELECT record."itemId",$2,$3,record.rank,record."soldQuantity",record.price,
+              record."originalPrice",record."ratingAverage",record."reviewCount"
+       FROM jsonb_to_recordset($1::jsonb) AS record(
+         "itemId" text,rank integer,"soldQuantity" integer,price numeric,
+         "originalPrice" numeric,"ratingAverage" numeric,"reviewCount" integer
+       )
+       ON CONFLICT(item_id,category_id,observed_at) DO UPDATE SET
+         rank=EXCLUDED.rank,sold_quantity=EXCLUDED.sold_quantity,price=EXCLUDED.price,
+         original_price=EXCLUDED.original_price,rating_average=EXCLUDED.rating_average,
+         review_count=EXCLUDED.review_count`,
+      [JSON.stringify(records), categoryId, bucket],
+    );
+    return result.rowCount ?? 0;
   }
 
   async recentIdentityKeys(retentionDays = 7) {

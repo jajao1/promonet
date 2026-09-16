@@ -407,6 +407,33 @@ test("creates durable collector schema and saves previews without secrets", asyn
   assert.doesNotMatch(JSON.stringify(calls.map(({ args }) => args)), /access.?token|cookie|csrf|secret/i);
 });
 
+test("creates and records idempotent twenty-minute offer metric snapshots", async () => {
+  const calls = [];
+  const db = { query: async (sql, args = []) => { calls.push({ sql, args }); return { rows: [], rowCount: 0 }; } };
+  const store = new CollectorStore(db);
+  await store.init();
+  assert.match(calls[0].sql, /CREATE TABLE IF NOT EXISTS promonet\.offer_metric_snapshots[\s\S]*PRIMARY KEY\(item_id,category_id,observed_at\)/i);
+  assert.match(calls[0].sql, /offer_metric_snapshots_category_observed_idx/i);
+
+  await store.recordOfferSnapshots("MLB23332", [{
+    itemId: "MLB1", rank: 2, soldQuantity: 850, price: 100, originalPrice: 150,
+    ratingAverage: 4.8, reviewCount: 240,
+  }, { itemId: "", rank: 1 }], new Date("2026-09-15T12:07:00.000Z"));
+
+  const insert = calls.find(({ sql }) => /INSERT INTO promonet\.offer_metric_snapshots/i.test(sql));
+  assert.ok(insert);
+  assert.match(insert.sql, /jsonb_to_recordset/i);
+  assert.match(insert.sql, /ON CONFLICT\(item_id,category_id,observed_at\) DO UPDATE/i);
+  assert.equal(insert.args[1], "MLB23332");
+  assert.deepEqual(insert.args[2], new Date("2026-09-15T12:00:00.000Z"));
+  assert.deepEqual(JSON.parse(insert.args[0]), [{
+    itemId: "MLB1", rank: 2, soldQuantity: 850, price: 100, originalPrice: 150,
+    ratingAverage: 4.8, reviewCount: 240,
+  }]);
+  await assert.rejects(() => store.recordOfferSnapshots("bad", [], new Date()), /invalid_category_id/);
+  await assert.rejects(() => store.recordOfferSnapshots("MLB23332", [], new Date("invalid")), /invalid_observed_at/);
+});
+
 test("initialization backfills recent historical publications into every dedup identity", async () => {
   const publishedAt = new Date("2026-09-15T18:00:00.000Z");
   const calls = [];
