@@ -59,7 +59,7 @@ test("production config enables clothing and fashion accessories with distinct l
   assert.deepEqual(home.categoryIds, ["MLB1613", "MLB264051", "MLB1631", "MLB1582", "MLB1621", "MLB436380", "MLB7069", "MLB436246"]);
   assert.deepEqual(niches.find(niche => niche.id === "tools").categoryIds, ["MLB189008", "MLB457298", "MLB236055", "MLB188790", "MLB188547", "MLB277928", "MLB30192"]);
   assert.deepEqual(niches.find(niche => niche.id === "computing").categoryIds, ["MLB1652", "MLB1714", "MLB99245", "MLB418472", "MLB1672", "MLB1693", "MLB1658"]);
-  assert.deepEqual(niches.find(niche => niche.id === "games").categoryIds, ["MLB11172", "MLB455266", "MLB448170", "MLB186456", "MLB455414", "MLB439598", "MLB448173"]);
+  assert.deepEqual(niches.find(niche => niche.id === "games").categoryIds, ["MLB11172", "MLB455266", "MLB448170", "MLB186456", "MLB455414", "MLB439598", "MLB439596"]);
   assert.deepEqual(niches.find(niche => niche.id === "sports").categoryIds, ["MLB180269", "MLB6852", "MLB67501", "MLB3894", "MLB118003", "MLB3095"]);
   assert.ok(niches.every(niche => niche.maxPerRound === 1));
   assert.ok(!niches.flatMap(niche => niche.categoryIds).includes("MLB1430"));
